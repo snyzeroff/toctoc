@@ -89,7 +89,7 @@ pub async fn run(app: AppHandle, code: String, host: bool) -> Result<Pairing, St
                 }
             }
             relay::Event::Alive => {}
-            relay::Event::Message(body) => {
+            relay::Event::Message { text: body, .. } => {
                 let Ok(m) = serde_json::from_str::<RdvMsg>(&body) else { continue };
                 if m.from == dev {
                     continue;

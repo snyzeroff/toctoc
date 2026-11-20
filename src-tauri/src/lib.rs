@@ -1,11 +1,13 @@
 mod config;
 mod crypto;
+mod history;
 mod notif;
 mod pairing;
 mod relay;
 mod sound;
 
 use config::{Config, Settings};
+use history::{History, Msg};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
@@ -15,12 +17,18 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt as _;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, Shortcut, ShortcutState};
 
 type Task = tauri::async_runtime::JoinHandle<()>;
+
+/// Taille maximale d'une image (après compression dans l'interface).
+const MAX_IMAGE: usize = 8 * 1024 * 1024;
+/// Au-delà, le message chiffré part en pièce jointe sur le relais.
+const INLINE_LIMIT: usize = 2900;
+const SHORTCUT_NAMES: [&str; 3] = ["ping", "quick", "main"];
 
 pub struct AppState {
     pub dir: PathBuf,
@@ -29,14 +37,17 @@ pub struct AppState {
     pub online: AtomicBool,
     pub notif: Mutex<Option<notif::Notice>>,
     pub notif_seq: AtomicU64,
+    history: Mutex<History>,
     listen_task: Mutex<Option<Task>>,
     pair_task: Mutex<Option<Task>>,
     pair_code: Mutex<Option<String>>,
     seen: Mutex<VecDeque<String>>,
-    last_sent: Mutex<Option<String>>,
+    last_ping: Mutex<Option<String>>,
     last_ping_at: Mutex<Option<Instant>>,
     dnd_item: Mutex<Option<CheckMenuItem<tauri::Wry>>>,
-    shortcut_ok: AtomicBool,
+    /// raccourcis enregistrés : (identifiant, action)
+    shortcuts: Mutex<Vec<(u32, &'static str)>>,
+    shortcut_ok: Mutex<[bool; 3]>,
 }
 
 impl AppState {
@@ -54,7 +65,7 @@ impl AppState {
             return false;
         }
         seen.push_back(id.to_string());
-        if seen.len() > 300 {
+        if seen.len() > 500 {
             seen.pop_front();
         }
         true
@@ -62,14 +73,24 @@ impl AppState {
 }
 
 /// Ce qui voyage (chiffré) entre les deux ordinateurs.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct Wire {
-    /// ping | ack | bye
+    /// ping | msg | ack | bye
     t: String,
     id: String,
     from: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    /// image en base64
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    img: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mime: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    drawing: bool,
+    /// prénom de l'expéditeur
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "ref")]
     reference: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,14 +115,57 @@ fn emit_state(app: &AppHandle) {
     let _ = app.emit("state", ());
 }
 
-fn show_main(app: &AppHandle, focus_text: bool) {
+fn emit_msg(app: &AppHandle, op: &str, msg: &Msg) {
+    let _ = app.emit("history", json!({ "op": op, "msg": msg }));
+}
+
+fn window_focused(app: &AppHandle, label: &str) -> bool {
+    app.get_webview_window(label)
+        .map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// Ouvre la fenêtre principale. `intent` : « draw », « settings » ou rien.
+fn show_main(app: &AppHandle, intent: Option<&str>) {
+    hide_quick(app);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
-        if focus_text {
-            let _ = app.emit_to("main", "focus-text", ());
+        if let Some(i) = intent {
+            let _ = app.emit_to("main", "intent", i);
         }
+    }
+}
+
+fn show_quick(app: &AppHandle) {
+    if app.state::<AppState>().cfg.lock().unwrap().pairing.is_none() {
+        show_main(app, None);
+        return;
+    }
+    let Some(w) = app.get_webview_window("quick") else { return };
+    if let (Ok(Some(mon)), Ok(size)) = (w.primary_monitor(), w.outer_size()) {
+        let area = mon.work_area();
+        let x = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
+        let y = area.position.y + (area.size.height as f64 * 0.16) as i32;
+        let _ = w.set_position(PhysicalPosition::new(x, y));
+    }
+    let _ = w.show();
+    let _ = w.set_focus();
+    let _ = app.emit_to("quick", "quick-open", ());
+}
+
+fn hide_quick(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("quick") {
+        let _ = w.hide();
+    }
+}
+
+fn toggle_quick(app: &AppHandle) {
+    if window_focused(app, "quick") {
+        hide_quick(app);
+    } else {
+        show_quick(app);
     }
 }
 
@@ -110,6 +174,51 @@ fn play_sound(app: &AppHandle) {
     let settings = st.cfg.lock().unwrap().settings.clone();
     let dir = st.dir.clone();
     sound::play(&settings, move |line| config::log(&dir, line));
+}
+
+fn peer_label(app: &AppHandle) -> String {
+    let name = app.state::<AppState>().cfg.lock().unwrap().peer_name.clone();
+    if name.is_empty() {
+        "Nouveau message".into()
+    } else {
+        name
+    }
+}
+
+/// Aperçu en texte simple d'un message en markdown.
+fn preview_text(md: &str) -> String {
+    let mut out = String::new();
+    let mut chars = md.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' | '_' | '~' | '`' | '#' | '>' => {}
+            '[' => {
+                // [texte](lien) → texte
+                let mut label = String::new();
+                for d in chars.by_ref() {
+                    if d == ']' {
+                        break;
+                    }
+                    label.push(d);
+                }
+                if chars.peek() == Some(&'(') {
+                    for d in chars.by_ref() {
+                        if d == ')' {
+                            break;
+                        }
+                    }
+                }
+                out.push_str(&label);
+            }
+            c if c.is_whitespace() => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.trim().chars().take(140).collect()
 }
 
 // ───────────────────────── écoute du relais ─────────────────────────
@@ -152,7 +261,24 @@ fn start_listening(app: &AppHandle) {
                         set_online(&app2, true);
                     }
                     relay::Event::Alive => {}
-                    relay::Event::Message(m) => handle_incoming(&app2, &key, &m),
+                    relay::Event::Message { text, attachment: None } => {
+                        if let Some(plain) = crypto::decrypt(&key, &text) {
+                            handle_plain(&app2, &key, &plain);
+                        }
+                    }
+                    relay::Event::Message { attachment: Some(url), .. } => {
+                        let (app3, http, relay_url) = (app2.clone(), http.clone(), relay_url.clone());
+                        tauri::async_runtime::spawn(async move {
+                            match relay::download(&http, &relay_url, &url, MAX_IMAGE * 2).await {
+                                Ok(raw) => {
+                                    if let Some(plain) = crypto::decrypt_raw(&key, &raw) {
+                                        handle_plain(&app3, &key, &plain);
+                                    }
+                                }
+                                Err(e) => app3.state::<AppState>().log(&format!("pièce jointe: échec ({e})")),
+                            }
+                        });
+                    }
                 }
             })
             .await;
@@ -176,10 +302,9 @@ fn set_online(app: &AppHandle, online: bool) {
     }
 }
 
-fn handle_incoming(app: &AppHandle, key: &[u8; 32], body: &str) {
+fn handle_plain(app: &AppHandle, key: &[u8; 32], plain: &[u8]) {
     let st = app.state::<AppState>();
-    let Some(plain) = crypto::decrypt(key, body) else { return };
-    let Ok(msg) = serde_json::from_slice::<Wire>(&plain) else { return };
+    let Ok(msg) = serde_json::from_slice::<Wire>(plain) else { return };
     let (dev, dnd, duration) = {
         let c = st.cfg.lock().unwrap();
         (c.device_id.clone(), c.settings.dnd, c.settings.duration)
@@ -187,35 +312,95 @@ fn handle_incoming(app: &AppHandle, key: &[u8; 32], body: &str) {
     if msg.from == dev || !st.first_time(&msg.id) {
         return;
     }
+    if let Some(name) = &msg.name {
+        let name: String = name.trim().chars().filter(|c| !c.is_control()).take(30).collect();
+        let mut c = st.cfg.lock().unwrap();
+        if c.peer_name != name {
+            c.peer_name = name;
+            drop(c);
+            st.save();
+            emit_state(app);
+        }
+    }
     match msg.t.as_str() {
-        "ping" => {
-            let text: String = msg.text.unwrap_or_default().chars().take(200).collect();
+        "ping" | "msg" => {
+            let text: Option<String> = msg
+                .text
+                .as_deref()
+                .map(|t| t.chars().take(4000).collect::<String>())
+                .filter(|t| !t.trim().is_empty());
+            // image : on la range dans media/
+            let mut image = None;
+            if let (Some(b64), Some(ext)) = (&msg.img, msg.mime.as_deref().and_then(history::ext_for_mime)) {
+                if let Some(bytes) = crypto::unb64(b64).filter(|b| b.len() <= MAX_IMAGE) {
+                    let name = format!("{}.{ext}", crypto::random_hex(8));
+                    let dir = history::media_dir(&st.dir);
+                    let _ = std::fs::create_dir_all(&dir);
+                    if std::fs::write(dir.join(&name), bytes).is_ok() {
+                        image = Some(name);
+                    }
+                }
+            }
+            if msg.t == "msg" && text.is_none() && image.is_none() {
+                return;
+            }
+            let entry = Msg {
+                id: crypto::random_hex(8),
+                out: false,
+                ts: history::now_ms(),
+                kind: msg.t.clone(),
+                text: text.clone(),
+                image: image.clone(),
+                drawing: msg.drawing,
+                status: "received".into(),
+            };
+            st.history.lock().unwrap().add(entry.clone());
+            emit_msg(app, "add", &entry);
             if dnd {
-                st.log("ping: reçu, ignoré (ne pas déranger)");
+                st.log(&format!("{}: reçu, sans alerte (ne pas déranger)", msg.t));
             } else {
-                st.log(&format!("ping: reçu ({} caractères)", text.chars().count()));
-                notif::show(app, "ping", "Toc toc !", &text, (duration * 1000.0) as u64);
+                st.log(&format!("{}: reçu", msg.t));
+                // conversation déjà sous les yeux : juste le son
+                let watching = window_focused(app, "main") || window_focused(app, "quick");
+                if !watching {
+                    let ms = (duration * 1000.0) as u64;
+                    if msg.t == "ping" {
+                        let title = app.state::<AppState>().cfg.lock().unwrap().peer_name.clone();
+                        let title = if title.is_empty() { "Toc toc !".to_string() } else { format!("{title} : toc toc !") };
+                        notif::show_with(app, "ping", &title, &preview_text(text.as_deref().unwrap_or("")), ms, None);
+                    } else {
+                        let body = match (&text, &image, msg.drawing) {
+                            (Some(t), _, _) => preview_text(t),
+                            (None, Some(_), true) => "✏️ Dessin".into(),
+                            _ => "📷 Image".into(),
+                        };
+                        notif::show_with(app, "msg", &peer_label(app), &body, ms, image.clone());
+                    }
+                }
                 play_sound(app);
             }
             let ack = Wire {
                 t: "ack".into(),
                 id: crypto::random_hex(8),
                 from: dev,
-                text: None,
                 reference: Some(msg.id),
                 dnd: dnd.then_some(true),
+                ..Default::default()
             };
-            publish_wire(app, key, ack);
+            publish_small(app, key, ack);
         }
         "ack" => {
-            let is_mine = st.last_sent.lock().unwrap().as_deref() == msg.reference.as_deref();
-            if is_mine && msg.reference.is_some() {
-                *st.last_sent.lock().unwrap() = None;
+            let Some(reference) = msg.reference else { return };
+            if let Some(m) = st.history.lock().unwrap().set_status(&reference, "delivered") {
+                emit_msg(app, "update", &m);
+            }
+            // pastille « Reçu » seulement pour un ping
+            let was_ping = st.last_ping.lock().unwrap().as_deref() == Some(reference.as_str());
+            if was_ping {
+                *st.last_ping.lock().unwrap() = None;
                 if msg.dnd == Some(true) {
-                    st.log("ping: accusé reçu (l'autre est en « ne pas déranger »)");
                     notif::show(app, "ack", "Reçu (ne pas déranger)", "", 2200);
                 } else {
-                    st.log("ping: accusé reçu");
                     notif::show(app, "ack", "Reçu", "", 1500);
                 }
             }
@@ -223,13 +408,14 @@ fn handle_incoming(app: &AppHandle, key: &[u8; 32], body: &str) {
         "bye" => {
             st.log("appairage: l'autre ordinateur s'est dissocié");
             forget_pairing(app);
-            show_main(app, false);
+            show_main(app, None);
         }
         _ => {}
     }
 }
 
-fn publish_wire(app: &AppHandle, key: &[u8; 32], wire: Wire) {
+/// Envoie un petit message de service (accusé, au revoir) sans attendre.
+fn publish_small(app: &AppHandle, key: &[u8; 32], wire: Wire) {
     let st = app.state::<AppState>();
     let (relay_url, topic) = {
         let c = st.cfg.lock().unwrap();
@@ -244,66 +430,120 @@ fn publish_wire(app: &AppHandle, key: &[u8; 32], wire: Wire) {
     });
 }
 
+/// Chiffre et publie ; les gros messages partent en pièce jointe.
+async fn transmit(app: &AppHandle, wire: &Wire) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let (pairing, relay_url) = {
+        let c = st.cfg.lock().unwrap();
+        (c.pairing.clone(), c.relay.clone())
+    };
+    let p = pairing.ok_or("Cet ordinateur n'est pas encore associé.")?;
+    let key = crypto::key_from_b64(&p.key).ok_or("Clé illisible.")?;
+    st.first_time(&wire.id);
+    let raw = crypto::encrypt_raw(&key, &serde_json::to_vec(wire).unwrap());
+    if raw.len() <= INLINE_LIMIT {
+        relay::publish(&st.http, &relay_url, &p.topic, crypto::b64(&raw)).await
+    } else {
+        relay::publish_bytes(&st.http, &relay_url, &p.topic, raw).await
+    }
+}
+
 fn forget_pairing(app: &AppHandle) {
     let st = app.state::<AppState>();
-    st.cfg.lock().unwrap().pairing = None;
+    {
+        let mut c = st.cfg.lock().unwrap();
+        c.pairing = None;
+        c.peer_name.clear();
+    }
     st.save();
     start_listening(app);
 }
 
-// ───────────────────────── envoyer un ping ─────────────────────────
+fn my_name(app: &AppHandle) -> Option<String> {
+    let n = app.state::<AppState>().cfg.lock().unwrap().settings.name.clone();
+    (!n.is_empty()).then_some(n)
+}
 
-pub async fn send_ping(app: AppHandle, text: String) -> Result<(), String> {
+// ───────────────────────── envoyer ─────────────────────────
+
+/// Envoie (ou renvoie) un message de l'historique.
+async fn deliver(app: AppHandle, id: String) {
     let st = app.state::<AppState>();
-    let (pairing, relay_url, dev) = {
-        let c = st.cfg.lock().unwrap();
-        (c.pairing.clone(), c.relay.clone(), c.device_id.clone())
-    };
-    let Some(p) = pairing else {
-        show_main(&app, false);
-        return Err("Cet ordinateur n'est pas encore associé.".into());
-    };
-    let key = crypto::key_from_b64(&p.key).ok_or("Clé illisible.")?;
-    {
-        // évite les rafales (touche du raccourci maintenue)
-        let mut last = st.last_ping_at.lock().unwrap();
-        if last.map(|t| t.elapsed() < Duration::from_millis(700)).unwrap_or(false) {
-            return Ok(());
-        }
-        *last = Some(Instant::now());
-    }
-    let text: String = text.trim().chars().take(200).collect();
-    let id = crypto::random_hex(8);
-    st.first_time(&id);
-    let wire = Wire {
-        t: "ping".into(),
-        id: id.clone(),
+    let Some(m) = st.history.lock().unwrap().get(&id) else { return };
+    let dev = st.cfg.lock().unwrap().device_id.clone();
+    let mut wire = Wire {
+        t: m.kind.clone(),
+        id: m.id.clone(),
         from: dev,
-        text: (!text.is_empty()).then(|| text.clone()),
-        reference: None,
-        dnd: None,
+        text: m.text.clone(),
+        drawing: m.drawing,
+        name: my_name(&app),
+        ..Default::default()
     };
-    let body = crypto::encrypt(&key, &serde_json::to_vec(&wire).unwrap());
-    match relay::publish(&st.http, &relay_url, &p.topic, body).await {
-        Ok(()) => {
-            *st.last_sent.lock().unwrap() = Some(id);
-            st.log("ping: envoyé");
-            notif::show(&app, "sent", "Ping envoyé", "", 2000);
-            Ok(())
+    if let Some(img) = &m.image {
+        match std::fs::read(history::media_dir(&st.dir).join(img)) {
+            Ok(bytes) => {
+                wire.img = Some(crypto::b64(&bytes));
+                wire.mime = Some(history::mime_for_name(img).into());
+            }
+            Err(_) => {
+                st.log("envoi: image introuvable");
+            }
         }
-        Err(e) => {
-            st.log(&format!("ping: échec de l'envoi ({e})"));
+    }
+    let res = transmit(&app, &wire).await;
+    let status = if res.is_ok() { "sent" } else { "failed" };
+    match &res {
+        Ok(()) => st.log(&format!("{}: envoyé", m.kind)),
+        Err(e) => st.log(&format!("{}: échec de l'envoi ({e})", m.kind)),
+    }
+    if let Some(m2) = st.history.lock().unwrap().set_status(&id, status) {
+        emit_msg(&app, "update", &m2);
+    }
+    if m.kind == "ping" {
+        // le ping part souvent sans fenêtre ouverte : une petite pastille confirme
+        if res.is_ok() {
+            *st.last_ping.lock().unwrap() = Some(id);
+            notif::show(&app, "sent", "Ping envoyé", "", 2000);
+        } else {
             notif::show(&app, "error", "Ping non envoyé", "Vérifiez la connexion Internet", 3500);
-            Err("Ping non envoyé : vérifiez la connexion Internet.".into())
         }
     }
 }
 
-fn ping_in_background(app: &AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = send_ping(app, String::new()).await;
-    });
+fn add_outgoing(app: &AppHandle, kind: &str, text: Option<String>, image: Option<String>, drawing: bool) -> Msg {
+    let st = app.state::<AppState>();
+    let m = Msg {
+        id: crypto::random_hex(8),
+        out: true,
+        ts: history::now_ms(),
+        kind: kind.into(),
+        text,
+        image,
+        drawing,
+        status: "sending".into(),
+    };
+    st.history.lock().unwrap().add(m.clone());
+    emit_msg(app, "add", &m);
+    m
+}
+
+fn ping_now(app: &AppHandle) {
+    let st = app.state::<AppState>();
+    if st.cfg.lock().unwrap().pairing.is_none() {
+        show_main(app, None);
+        return;
+    }
+    {
+        // évite les rafales (touche du raccourci maintenue)
+        let mut last = st.last_ping_at.lock().unwrap();
+        if last.map(|t| t.elapsed() < Duration::from_millis(700)).unwrap_or(false) {
+            return;
+        }
+        *last = Some(Instant::now());
+    }
+    let m = add_outgoing(app, "ping", None, None, false);
+    tauri::async_runtime::spawn(deliver(app.clone(), m.id));
 }
 
 // ───────────────────────── appairage ─────────────────────────
@@ -327,7 +567,7 @@ fn start_pairing(app: &AppHandle, code: String, host: bool) {
                 st.log("appairage: réussi");
                 start_listening(&app2);
                 let _ = app2.emit("pair-result", json!({ "ok": true }));
-                notif::show(&app2, "info", "Ordinateurs associés", "Envoyez votre premier ping !", 4000);
+                notif::show(&app2, "info", "Ordinateurs associés", "Envoyez votre premier message !", 4000);
             }
             Err(e) => {
                 st.log(&format!("appairage: échec ({e})"));
@@ -341,11 +581,31 @@ fn start_pairing(app: &AppHandle, code: String, host: bool) {
 
 // ───────────────────────── réglages ─────────────────────────
 
-fn apply_shortcut(app: &AppHandle, shortcut: &str) -> bool {
+/// (Ré)enregistre les trois raccourcis globaux.
+fn apply_shortcuts(app: &AppHandle) -> [bool; 3] {
+    let st = app.state::<AppState>();
+    let s = st.cfg.lock().unwrap().settings.clone();
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let ok = shortcut.is_empty() || gs.register(shortcut).is_ok();
-    app.state::<AppState>().shortcut_ok.store(ok, Ordering::SeqCst);
+    let mut map: Vec<(u32, &'static str)> = Vec::new();
+    let mut ok = [true; 3];
+    for (i, accel) in [&s.shortcut, &s.shortcut_quick, &s.shortcut_main].into_iter().enumerate() {
+        if accel.is_empty() {
+            continue;
+        }
+        match accel.parse::<Shortcut>() {
+            Ok(sc) if !map.iter().any(|(id, _)| *id == sc.id()) => {
+                if gs.register(sc).is_ok() {
+                    map.push((sc.id(), SHORTCUT_NAMES[i]));
+                } else {
+                    ok[i] = false;
+                }
+            }
+            _ => ok[i] = false,
+        }
+    }
+    *st.shortcuts.lock().unwrap() = map;
+    *st.shortcut_ok.lock().unwrap() = ok;
     ok
 }
 
@@ -370,16 +630,14 @@ fn quote_autostart_path(name: &str) {
 
 fn apply_settings(app: &AppHandle, mut new: Settings) {
     let st = app.state::<AppState>();
+    let old = st.cfg.lock().unwrap().settings.clone();
+    // les raccourcis se changent uniquement par set_shortcut
+    new.shortcut = old.shortcut.clone();
+    new.shortcut_quick = old.shortcut_quick.clone();
+    new.shortcut_main = old.shortcut_main.clone();
     new.sanitize();
-    let old = {
-        let mut c = st.cfg.lock().unwrap();
-        std::mem::replace(&mut c.settings, new.clone())
-    };
+    st.cfg.lock().unwrap().settings = new.clone();
     st.save();
-    if old.shortcut != new.shortcut {
-        let ok = apply_shortcut(app, &new.shortcut);
-        st.log(&format!("réglages: raccourci « {} » {}", new.shortcut, if ok { "actif" } else { "indisponible" }));
-    }
     if old.autostart != new.autostart {
         let al = app.autolaunch();
         let res = if new.autostart { al.enable() } else { al.disable() };
@@ -387,13 +645,20 @@ fn apply_settings(app: &AppHandle, mut new: Settings) {
         if new.autostart {
             quote_autostart_path(&app.package_info().name);
         }
-        st.log(&format!("réglages: lancement au démarrage = {} ({})", new.autostart, if res.is_ok() { "ok" } else { "erreur" }));
+        st.log(&format!(
+            "réglages: lancement au démarrage = {} ({})",
+            new.autostart,
+            if res.is_ok() { "ok" } else { "erreur" }
+        ));
     }
     if old.dnd != new.dnd {
         if let Some(item) = st.dnd_item.lock().unwrap().as_ref() {
             let _ = item.set_checked(new.dnd);
         }
         st.log(&format!("réglages: ne pas déranger = {}", new.dnd));
+    }
+    if old.name != new.name {
+        st.log("réglages: prénom modifié");
     }
 }
 
@@ -407,8 +672,9 @@ fn get_state(app: AppHandle) -> serde_json::Value {
         "paired": c.pairing.is_some(),
         "online": st.online.load(Ordering::SeqCst),
         "settings": c.settings,
+        "peer_name": c.peer_name,
         "pair_code": *st.pair_code.lock().unwrap(),
-        "shortcut_ok": st.shortcut_ok.load(Ordering::SeqCst),
+        "shortcut_ok": *st.shortcut_ok.lock().unwrap(),
         "mac": cfg!(target_os = "macos"),
         "version": env!("CARGO_PKG_VERSION"),
     })
@@ -417,7 +683,40 @@ fn get_state(app: AppHandle) -> serde_json::Value {
 #[tauri::command]
 fn set_settings(app: AppHandle, settings: Settings) -> serde_json::Value {
     apply_settings(&app, settings);
+    emit_state(&app);
     get_state(app)
+}
+
+fn shortcut_field(s: &mut Settings, idx: usize) -> &mut String {
+    match idx {
+        0 => &mut s.shortcut,
+        1 => &mut s.shortcut_quick,
+        _ => &mut s.shortcut_main,
+    }
+}
+
+#[tauri::command]
+fn set_shortcut(app: AppHandle, which: String, accel: String) -> Result<serde_json::Value, String> {
+    let idx = SHORTCUT_NAMES.iter().position(|n| *n == which).ok_or("Raccourci inconnu.")?;
+    let accel = accel.trim().to_string();
+    if !accel.is_empty() && accel.parse::<Shortcut>().is_err() {
+        return Err("Raccourci non reconnu.".into());
+    }
+    let st = app.state::<AppState>();
+    let old = {
+        let mut c = st.cfg.lock().unwrap();
+        std::mem::replace(shortcut_field(&mut c.settings, idx), accel.clone())
+    };
+    let ok = apply_shortcuts(&app);
+    if !accel.is_empty() && !ok[idx] {
+        *shortcut_field(&mut st.cfg.lock().unwrap().settings, idx) = old;
+        apply_shortcuts(&app);
+        return Err("Ce raccourci est déjà pris (par une autre application ou un autre raccourci).".into());
+    }
+    st.save();
+    st.log(&format!("réglages: raccourci {which} = « {accel} »"));
+    emit_state(&app);
+    Ok(get_state(app))
 }
 
 #[tauri::command]
@@ -453,16 +752,90 @@ fn unpair(app: AppHandle) {
     };
     if let Some(key) = key {
         // prévient l'autre ordinateur, puis oublie le canal
-        let bye = Wire { t: "bye".into(), id: crypto::random_hex(8), from: dev, text: None, reference: None, dnd: None };
-        publish_wire(&app, &key, bye);
+        let bye = Wire { t: "bye".into(), id: crypto::random_hex(8), from: dev, ..Default::default() };
+        publish_small(&app, &key, bye);
     }
     st.log("appairage: dissocié");
     forget_pairing(&app);
 }
 
 #[tauri::command]
-async fn ping(app: AppHandle, text: String) -> Result<(), String> {
-    send_ping(app, text).await
+fn ping(app: AppHandle) {
+    ping_now(&app);
+}
+
+#[tauri::command]
+fn send_message(
+    app: AppHandle,
+    text: String,
+    image: Option<String>,
+    mime: Option<String>,
+    drawing: bool,
+) -> Result<Msg, String> {
+    let st = app.state::<AppState>();
+    if st.cfg.lock().unwrap().pairing.is_none() {
+        return Err("Cet ordinateur n'est pas encore associé.".into());
+    }
+    let text = text.trim().to_string();
+    if text.chars().count() > 4000 {
+        return Err("Message trop long (4000 caractères au plus).".into());
+    }
+    let mut image_name = None;
+    if let Some(b64) = image {
+        let ext = mime.as_deref().and_then(history::ext_for_mime).ok_or("Format d'image non pris en charge.")?;
+        let bytes = crypto::unb64(&b64).ok_or("Image illisible.")?;
+        if bytes.len() > MAX_IMAGE {
+            return Err("Image trop lourde (8 Mo au plus).".into());
+        }
+        let name = format!("{}.{ext}", crypto::random_hex(8));
+        let dir = history::media_dir(&st.dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
+        image_name = Some(name);
+    }
+    if text.is_empty() && image_name.is_none() {
+        return Err("Message vide.".into());
+    }
+    let m = add_outgoing(&app, "msg", (!text.is_empty()).then_some(text), image_name, drawing);
+    tauri::async_runtime::spawn(deliver(app.clone(), m.id.clone()));
+    Ok(m)
+}
+
+#[tauri::command]
+fn retry(app: AppHandle, id: String) {
+    let st = app.state::<AppState>();
+    let m = st.history.lock().unwrap().set_status(&id, "sending");
+    if let Some(m) = m {
+        emit_msg(&app, "update", &m);
+        tauri::async_runtime::spawn(deliver(app.clone(), id));
+    }
+}
+
+#[tauri::command]
+fn history(app: AppHandle, before: Option<String>, limit: Option<usize>) -> Vec<Msg> {
+    let st = app.state::<AppState>();
+    let h = st.history.lock().unwrap();
+    h.page(before.as_deref(), limit.unwrap_or(60).clamp(1, 500))
+}
+
+/// Relit une image de l'historique (pour dessiner dessus).
+#[tauri::command]
+fn read_media(app: AppHandle, name: String) -> Result<String, String> {
+    if !history::valid_media_name(&name) {
+        return Err("Image inconnue.".into());
+    }
+    let st = app.state::<AppState>();
+    std::fs::read(history::media_dir(&st.dir).join(&name))
+        .map(|b| crypto::b64(&b))
+        .map_err(|_| "Image introuvable.".to_string())
+}
+
+#[tauri::command]
+fn clear_history(app: AppHandle) {
+    let st = app.state::<AppState>();
+    st.history.lock().unwrap().clear();
+    st.log("historique: effacé");
+    let _ = app.emit("history", json!({ "op": "clear" }));
 }
 
 #[tauri::command]
@@ -499,6 +872,35 @@ async fn pick_sound(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn open_quick(app: AppHandle) {
+    show_quick(&app);
+}
+
+#[tauri::command]
+fn close_quick(app: AppHandle) {
+    hide_quick(&app);
+}
+
+#[tauri::command]
+fn open_main(app: AppHandle, intent: Option<String>) {
+    show_main(&app, intent.as_deref());
+}
+
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
+        return Err("Lien non pris en charge.".into());
+    }
+    #[cfg(windows)]
+    let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &url]).spawn();
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let r = std::process::Command::new("xdg-open").arg(&url).spawn();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn notif_current(app: AppHandle) -> Option<notif::Notice> {
     app.state::<AppState>().notif.lock().unwrap().clone()
 }
@@ -508,19 +910,30 @@ fn notif_done(app: AppHandle, seq: u64) {
     notif::hide_if_current(&app, seq);
 }
 
+/// Clic sur une notification : on la ferme et on ouvre la fenêtre rapide pour répondre.
+#[tauri::command]
+fn notif_click(app: AppHandle, seq: u64, kind: String) {
+    notif::hide_if_current(&app, seq);
+    if kind == "ping" || kind == "msg" {
+        show_quick(&app);
+    }
+}
+
 // ───────────────────────── démarrage ─────────────────────────
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let st = app.state::<AppState>();
     let dnd = st.cfg.lock().unwrap().settings.dnd;
     let ping_item = MenuItemBuilder::with_id("ping", "Envoyer un ping").build(app)?;
-    let write_item = MenuItemBuilder::with_id("write", "Écrire un message…").build(app)?;
+    let quick_item = MenuItemBuilder::with_id("quick", "Écrire un message…").build(app)?;
+    let conv_item = MenuItemBuilder::with_id("conv", "Ouvrir la conversation").build(app)?;
     let dnd_item = CheckMenuItemBuilder::with_id("dnd", "Ne pas déranger").checked(dnd).build(app)?;
     let settings_item = MenuItemBuilder::with_id("settings", "Réglages…").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quitter Toc Toc").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&ping_item)
-        .item(&write_item)
+        .item(&quick_item)
+        .item(&conv_item)
         .separator()
         .item(&dnd_item)
         .item(&settings_item)
@@ -541,9 +954,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "ping" => ping_in_background(app),
-            "write" => show_main(app, true),
-            "settings" => show_main(app, false),
+            "ping" => ping_now(app),
+            "quick" => show_quick(app),
+            "conv" => show_main(app, None),
+            "settings" => show_main(app, Some("settings")),
             "dnd" => {
                 let st = app.state::<AppState>();
                 let mut s = st.cfg.lock().unwrap().settings.clone();
@@ -557,11 +971,30 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_tray_icon_event(|tray, event| {
             // un simple clic sur l'icône envoie un ping
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                ping_in_background(tray.app_handle());
+                ping_now(tray.app_handle());
             }
         })
         .build(app)?;
     Ok(())
+}
+
+/// Sert les images de l'historique à l'interface (adresse tocmedia://…).
+fn media_response(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let name = path.trim_start_matches('/');
+    let not_found = || tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
+    if !history::valid_media_name(name) {
+        return not_found();
+    }
+    let Some(st) = app.try_state::<AppState>() else { return not_found() };
+    match std::fs::read(history::media_dir(&st.dir).join(name)) {
+        Ok(bytes) => tauri::http::Response::builder()
+            .header("Content-Type", history::mime_for_name(name))
+            .header("Cache-Control", "max-age=31536000, immutable")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(bytes)
+            .unwrap(),
+        Err(_) => not_found(),
+    }
 }
 
 pub fn run() {
@@ -573,7 +1006,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     if profile.is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_main(app, false);
+            show_main(app, None);
         }));
     }
     builder
@@ -584,25 +1017,51 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        ping_in_background(app);
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let action = app
+                        .state::<AppState>()
+                        .shortcuts
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|(id, _)| *id == shortcut.id())
+                        .map(|(_, a)| *a);
+                    match action {
+                        Some("ping") => ping_now(app),
+                        Some("quick") => toggle_quick(app),
+                        Some("main") => show_main(app, None),
+                        _ => {}
                     }
                 })
                 .build(),
         )
+        .register_uri_scheme_protocol("tocmedia", |ctx, request| media_response(ctx.app_handle(), request.uri().path()))
         .invoke_handler(tauri::generate_handler![
             get_state,
             set_settings,
+            set_shortcut,
             pair_create,
             pair_join,
             pair_cancel,
             unpair,
             ping,
+            send_message,
+            retry,
+            history,
+            read_media,
+            clear_history,
             preview,
             pick_sound,
+            open_quick,
+            close_quick,
+            open_main,
+            open_link,
             notif_current,
-            notif_done
+            notif_done,
+            notif_click
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -616,8 +1075,9 @@ pub fn run() {
             // la vérité sur le lancement au démarrage est celle du système
             cfg.settings.autostart = handle.autolaunch().is_enabled().unwrap_or(false);
             let paired = cfg.pairing.is_some();
-            let shortcut = cfg.settings.shortcut.clone();
             config::save(&dir, &cfg);
+            let mut hist = History::load(&dir);
+            hist.fail_pending();
 
             app.manage(AppState {
                 dir,
@@ -626,14 +1086,16 @@ pub fn run() {
                 online: AtomicBool::new(false),
                 notif: Mutex::new(None),
                 notif_seq: AtomicU64::new(0),
+                history: Mutex::new(hist),
                 listen_task: Mutex::new(None),
                 pair_task: Mutex::new(None),
                 pair_code: Mutex::new(None),
                 seen: Mutex::new(VecDeque::new()),
-                last_sent: Mutex::new(None),
+                last_ping: Mutex::new(None),
                 last_ping_at: Mutex::new(None),
                 dnd_item: Mutex::new(None),
-                shortcut_ok: AtomicBool::new(true),
+                shortcuts: Mutex::new(Vec::new()),
+                shortcut_ok: Mutex::new([true; 3]),
             });
             let st = handle.state::<AppState>();
             st.log(&format!("démarrage (version {})", env!("CARGO_PKG_VERSION")));
@@ -643,9 +1105,8 @@ pub fn run() {
 
             let mut main = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::App("index.html".into()))
                 .title("Toc Toc")
-                .inner_size(420.0, 720.0)
-                .min_inner_size(380.0, 480.0)
-                .maximizable(false)
+                .inner_size(480.0, 740.0)
+                .min_inner_size(380.0, 500.0)
                 .visible(false)
                 .center();
             if let Some(d) = &webview_dir {
@@ -661,10 +1122,36 @@ pub fn run() {
                 }
             });
 
+            let mut quick = WebviewWindowBuilder::new(&handle, "quick", WebviewUrl::App("quick.html".into()))
+                .title("Toc Toc – message rapide")
+                .inner_size(440.0, 540.0)
+                .decorations(false)
+                .transparent(true)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .maximizable(false)
+                .minimizable(false)
+                .visible_on_all_workspaces(true)
+                .visible(false);
+            if let Some(d) = &webview_dir {
+                quick = quick.data_directory(d.clone());
+            }
+            let quick = quick.build()?;
+            let quick2 = quick.clone();
+            quick.on_window_event(move |e| {
+                if let WindowEvent::CloseRequested { api, .. } = e {
+                    api.prevent_close();
+                    let _ = quick2.hide();
+                }
+            });
+
             notif::create_window(&handle, webview_dir)?;
             build_tray(&handle)?;
-            if !apply_shortcut(&handle, &shortcut) {
-                st.log("raccourci: indisponible (déjà pris par une autre application)");
+            let ok = apply_shortcuts(&handle);
+            if ok.contains(&false) {
+                st.log(&format!("raccourcis: certains indisponibles {ok:?}"));
             }
             start_listening(&handle);
 

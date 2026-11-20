@@ -19,8 +19,12 @@ pub struct Settings {
     pub duration: f32,
     pub autostart: bool,
     pub dnd: bool,
-    /// raccourci global, vide = désactivé
+    /// raccourcis globaux (vide = désactivé) : ping, fenêtre rapide, fenêtre principale
     pub shortcut: String,
+    pub shortcut_quick: String,
+    pub shortcut_main: String,
+    /// prénom affiché chez l'autre (facultatif, voyage chiffré)
+    pub name: String,
 }
 
 impl Default for Settings {
@@ -35,11 +39,18 @@ impl Default for Settings {
             autostart: false,
             dnd: false,
             shortcut: "CmdOrCtrl+Alt+P".into(),
+            shortcut_quick: "CmdOrCtrl+Alt+M".into(),
+            shortcut_main: "CmdOrCtrl+Alt+O".into(),
+            name: String::new(),
         }
     }
 }
 
-pub const SHORTCUTS: [&str; 4] = ["CmdOrCtrl+Alt+P", "CmdOrCtrl+Alt+T", "CmdOrCtrl+Alt+Space", ""];
+fn clean_accel(s: &mut String) {
+    if s.len() > 64 || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+') {
+        s.clear();
+    }
+}
 
 impl Settings {
     pub fn sanitize(&mut self) {
@@ -60,9 +71,10 @@ impl Settings {
         if self.sound == "custom" && self.custom_sound.is_none() {
             self.sound = "carillon".into();
         }
-        if !SHORTCUTS.contains(&self.shortcut.as_str()) {
-            self.shortcut = SHORTCUTS[0].into();
-        }
+        clean_accel(&mut self.shortcut);
+        clean_accel(&mut self.shortcut_quick);
+        clean_accel(&mut self.shortcut_main);
+        self.name = self.name.trim().chars().filter(|c| !c.is_control()).take(30).collect();
     }
 }
 
@@ -81,6 +93,8 @@ pub struct Config {
     pub relay: String,
     pub pairing: Option<Pairing>,
     pub settings: Settings,
+    /// prénom de l'autre, tel qu'il l'a choisi
+    pub peer_name: String,
 }
 
 impl Default for Config {
@@ -90,6 +104,7 @@ impl Default for Config {
             relay: DEFAULT_RELAY.into(),
             pairing: None,
             settings: Settings::default(),
+            peer_name: String::new(),
         }
     }
 }

@@ -9,12 +9,14 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewU
 #[derive(Clone, Serialize)]
 pub struct Notice {
     pub seq: u64,
-    /// ping | sent | ack | error | info
+    /// ping | msg | sent | ack | error | info
     pub kind: String,
     pub title: String,
     pub text: String,
     pub size: String,
     pub duration_ms: u64,
+    /// petite image à droite (nom de fichier dans media/)
+    pub thumb: Option<String>,
 }
 
 /// Marge transparente autour de la carte (place pour l'ombre et la secousse).
@@ -85,12 +87,16 @@ fn place(app: &AppHandle, size: &str, position: &str) {
 
 /// Affiche une notification (remplace celle en cours).
 pub fn show(app: &AppHandle, kind: &str, title: &str, text: &str, duration_ms: u64) {
+    show_with(app, kind, title, text, duration_ms, None);
+}
+
+pub fn show_with(app: &AppHandle, kind: &str, title: &str, text: &str, duration_ms: u64, thumb: Option<String>) {
     let st = app.state::<AppState>();
     let (size, position) = {
         let c = st.cfg.lock().unwrap();
         (
             // les petites confirmations (« envoyé », « reçu ») restent toujours discrètes
-            if kind == "ping" || kind == "info" { c.settings.size.clone() } else { "small".to_string() },
+            if kind == "ping" || kind == "msg" || kind == "info" { c.settings.size.clone() } else { "small".to_string() },
             c.settings.position.clone(),
         )
     };
@@ -102,6 +108,7 @@ pub fn show(app: &AppHandle, kind: &str, title: &str, text: &str, duration_ms: u
         text: text.into(),
         size: size.clone(),
         duration_ms,
+        thumb,
     };
     *st.notif.lock().unwrap() = Some(notice.clone());
     place(app, &size, &position);

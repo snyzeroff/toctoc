@@ -1,6 +1,6 @@
 [package]
 name = "toctoc"
-version = "0.1.0"
+version = "0.2.0"
 description = "Toc Toc — un ping entre un PC et un Mac"
 edition = "2021"
 

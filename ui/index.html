@@ -16,13 +16,14 @@
       <circle cx="512" cy="512" r="196" fill="none" stroke="#fff" stroke-width="52" opacity=".75"/>
       <circle cx="512" cy="512" r="310" fill="none" stroke="#fff" stroke-width="44" opacity=".38"/>
     </svg>
-    <span>Toc Toc</span>
+    <span id="title">Toc Toc</span>
   </div>
   <div id="status" class="pill" hidden><i></i><span></span></div>
+  <button id="btn-settings" class="icon-btn" title="Réglages" hidden></button>
 </header>
 
 <!-- ───────── Appairage ───────── -->
-<main id="view-pair" hidden>
+<main id="view-pair" class="scroll" hidden>
   <section class="hero">
     <h1>Associez vos deux ordinateurs</h1>
     <p>Sur l'un, créez un code. Sur l'autre, tapez-le. C'est tout.</p>
@@ -52,89 +53,124 @@
   <p id="pair-error" class="error" hidden></p>
 </main>
 
-<!-- ───────── Accueil et réglages ───────── -->
-<main id="view-home" hidden>
-  <section class="card ping-card">
-    <input id="ping-text" maxlength="200" placeholder="Un petit mot (facultatif)" autocomplete="off">
-    <button id="btn-ping" class="primary big">Envoyer un ping</button>
-    <p id="ping-hint" class="hint"></p>
-  </section>
-
-  <h2>Notification</h2>
-  <section class="group">
-    <div class="row">
-      <label for="sound">Son</label>
-      <div class="inline">
-        <select id="sound"></select>
-        <button id="btn-listen" class="chip" title="Écouter">▶︎</button>
-      </div>
-    </div>
-    <div class="row">
-      <label>Son personnalisé</label>
-      <button id="btn-pick" class="chip">Choisir un fichier…</button>
-    </div>
-    <div class="row">
-      <label for="volume">Volume</label>
-      <input id="volume" type="range" min="0" max="100" step="1">
-    </div>
-    <div class="row tall">
-      <label>Position à l'écran</label>
-      <div id="position" class="screen" role="radiogroup" aria-label="Position à l'écran">
-        <button data-pos="top-left" title="En haut à gauche"></button>
-        <button data-pos="top-center" title="En haut au centre"></button>
-        <button data-pos="top-right" title="En haut à droite"></button>
-        <button data-pos="center" title="Au centre"></button>
-        <button data-pos="bottom-left" title="En bas à gauche"></button>
-        <button data-pos="bottom-center" title="En bas au centre"></button>
-        <button data-pos="bottom-right" title="En bas à droite"></button>
-      </div>
-    </div>
-    <div class="row">
-      <label>Taille</label>
-      <div id="size" class="segmented">
-        <button data-v="small">Petite</button><button data-v="medium">Moyenne</button><button data-v="large">Grande</button>
-      </div>
-    </div>
-    <div class="row">
-      <label>Durée d'affichage</label>
-      <div id="duration" class="segmented">
-        <button data-v="2">2 s</button><button data-v="4">4 s</button><button data-v="8">8 s</button><button data-v="15">15 s</button>
-      </div>
-    </div>
-    <div class="row">
-      <label>Voir le résultat</label>
-      <button id="btn-preview" class="chip">Aperçu</button>
-    </div>
-  </section>
-
-  <h2>Général</h2>
-  <section class="group">
-    <div class="row">
-      <label for="dnd">Ne pas déranger<small>Les pings arrivent sans s'afficher ni sonner</small></label>
-      <input id="dnd" type="checkbox" class="switch">
-    </div>
-    <div class="row">
-      <label for="autostart">Lancer au démarrage<small>Toc Toc s'ouvre tout seul avec l'ordinateur</small></label>
-      <input id="autostart" type="checkbox" class="switch">
-    </div>
-    <div class="row">
-      <label for="shortcut">Raccourci clavier<small id="shortcut-warn" class="warn" hidden>Déjà utilisé par une autre application</small></label>
-      <select id="shortcut"></select>
-    </div>
-  </section>
-
-  <section class="footer">
-    <button id="btn-unpair" class="link danger">Dissocier cet ordinateur</button>
-    <div id="unpair-confirm" hidden>
-      <span>Les deux ordinateurs ne seront plus reliés.</span>
-      <button id="btn-unpair-yes" class="chip danger">Dissocier</button>
-      <button id="btn-unpair-no" class="chip">Annuler</button>
-    </div>
-    <p id="version" class="hint"></p>
-  </section>
+<!-- ───────── Conversation ───────── -->
+<main id="view-chat" hidden>
+  <div id="conv"></div>
+  <div id="composer"></div>
 </main>
 
-<div id="toast" class="toast" hidden></div>
+<!-- ───────── Réglages ───────── -->
+<div id="sheet" class="sheet" hidden>
+  <header>
+    <div class="brand"><span>Réglages</span></div>
+    <button id="btn-done" class="pill-btn">Terminé</button>
+  </header>
+  <div class="scroll">
+    <h2>Vous</h2>
+    <section class="group">
+      <div class="row">
+        <label for="name">Votre prénom<small>Affiché chez l'autre (facultatif)</small></label>
+        <input id="name" class="text-input" maxlength="30" placeholder="Prénom" autocomplete="off" spellcheck="false">
+      </div>
+    </section>
+
+    <h2>Notification</h2>
+    <section class="group">
+      <div class="row">
+        <label for="sound">Son</label>
+        <div class="inline">
+          <select id="sound"></select>
+          <button id="btn-listen" class="chip" title="Écouter">▶︎</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Son personnalisé</label>
+        <button id="btn-pick" class="chip">Choisir un fichier…</button>
+      </div>
+      <div class="row">
+        <label for="volume">Volume</label>
+        <input id="volume" type="range" min="0" max="100" step="1">
+      </div>
+      <div class="row">
+        <label>Position à l'écran</label>
+        <div id="position" class="screen" role="radiogroup" aria-label="Position à l'écran">
+          <button data-pos="top-left" title="En haut à gauche"></button>
+          <button data-pos="top-center" title="En haut au centre"></button>
+          <button data-pos="top-right" title="En haut à droite"></button>
+          <button data-pos="center" title="Au centre"></button>
+          <button data-pos="bottom-left" title="En bas à gauche"></button>
+          <button data-pos="bottom-center" title="En bas au centre"></button>
+          <button data-pos="bottom-right" title="En bas à droite"></button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Taille</label>
+        <div id="size" class="segmented">
+          <button data-v="small">Petite</button><button data-v="medium">Moyenne</button><button data-v="large">Grande</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Durée d'affichage</label>
+        <div id="duration" class="segmented">
+          <button data-v="2">2 s</button><button data-v="4">4 s</button><button data-v="8">8 s</button><button data-v="15">15 s</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Voir le résultat</label>
+        <button id="btn-preview" class="chip">Aperçu</button>
+      </div>
+    </section>
+
+    <h2>Raccourcis clavier</h2>
+    <section class="group" id="shortcuts">
+      <div class="row" data-sc="quick">
+        <label>Message rapide<small>Ouvre une petite fenêtre pour écrire</small></label>
+        <div class="keys"><button class="keycap"></button><button class="x" title="Désactiver"></button></div>
+      </div>
+      <div class="row" data-sc="ping">
+        <label>Ping<small>Envoie un toc toc tout de suite</small></label>
+        <div class="keys"><button class="keycap"></button><button class="x" title="Désactiver"></button></div>
+      </div>
+      <div class="row" data-sc="main">
+        <label>Conversation<small>Ouvre cette fenêtre</small></label>
+        <div class="keys"><button class="keycap"></button><button class="x" title="Désactiver"></button></div>
+      </div>
+    </section>
+    <p class="hint" style="margin: 6px 14px 0">Cliquez sur un raccourci, puis appuyez sur les touches voulues (Échap pour annuler).</p>
+
+    <h2>Général</h2>
+    <section class="group">
+      <div class="row">
+        <label for="dnd">Ne pas déranger<small>Les messages arrivent sans s'afficher ni sonner</small></label>
+        <input id="dnd" type="checkbox" class="switch">
+      </div>
+      <div class="row">
+        <label for="autostart">Lancer au démarrage<small>Toc Toc s'ouvre tout seul avec l'ordinateur</small></label>
+        <input id="autostart" type="checkbox" class="switch">
+      </div>
+      <div class="row">
+        <label>Historique<small>Gardé uniquement sur cet ordinateur</small></label>
+        <div class="confirm" id="clear-zone">
+          <button id="btn-clear" class="chip">Effacer…</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="footer">
+      <button id="btn-unpair" class="link danger">Dissocier cet ordinateur</button>
+      <div id="unpair-confirm" class="confirm" hidden>
+        <span>Les deux ordinateurs ne seront plus reliés.</span>
+        <button id="btn-unpair-yes" class="chip danger">Dissocier</button>
+        <button id="btn-unpair-no" class="chip">Annuler</button>
+      </div>
+      <p id="version" class="hint"></p>
+    </section>
+  </div>
+</div>
+
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
+<script src="chat.js"></script>
 <script src="main.js"></script>
 </body>
 </html>

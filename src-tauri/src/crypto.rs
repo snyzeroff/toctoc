@@ -73,7 +73,8 @@ pub fn session_keys(shared: &[u8]) -> SessionKeys {
     SessionKeys { confirm, topic: format!("tt{}", hex::encode(topic)), key }
 }
 
-pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> String {
+/// Chiffre : 24 octets de nonce suivis du texte chiffré authentifié.
+pub fn encrypt_raw(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
     let nonce = random_bytes::<24>();
     let ct = cipher
@@ -81,11 +82,18 @@ pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> String {
         .expect("chiffrement");
     let mut out = nonce.to_vec();
     out.extend_from_slice(&ct);
-    B64.encode(out)
+    out
+}
+
+pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> String {
+    B64.encode(encrypt_raw(key, plaintext))
 }
 
 pub fn decrypt(key: &[u8; 32], message: &str) -> Option<Vec<u8>> {
-    let raw = B64.decode(message.trim()).ok()?;
+    decrypt_raw(key, &B64.decode(message.trim()).ok()?)
+}
+
+pub fn decrypt_raw(key: &[u8; 32], raw: &[u8]) -> Option<Vec<u8>> {
     if raw.len() < 24 + 16 {
         return None;
     }

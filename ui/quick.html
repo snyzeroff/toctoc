@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Toc Toc – message rapide</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  html, body { background: transparent; }
+  body { padding: 16px; }
+  #panel {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    background: var(--bg); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .28), 0 0 0 1px var(--line);
+    animation: drop .18s ease-out;
+  }
+  @keyframes drop { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: none; } }
+  header { padding: 8px 8px 8px 14px; cursor: grab; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); flex: none; }
+  .dot.on { background: var(--ok); }
+  #peer { font-weight: 650; font-size: 14.5px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .icon-btn { width: 30px; height: 30px; }
+  .icon-btn .ico { width: 17px; height: 17px; }
+  .conv { padding: 6px 12px 4px; }
+  .msg { max-width: 88%; }
+  .photo { max-height: 180px; }
+  .composer { padding: 8px 10px 10px; }
+  kbd { font: inherit; font-size: 11px; color: var(--muted); }
+  .toast { bottom: 70px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <header data-tauri-drag-region>
+    <span id="dot" class="dot" data-tauri-drag-region></span>
+    <span id="peer" data-tauri-drag-region>Conversation</span>
+    <button id="btn-expand" class="icon-btn" title="Agrandir la conversation"></button>
+    <button id="btn-close" class="icon-btn" title="Fermer (Échap)"></button>
+  </header>
+  <div id="conv"></div>
+  <div id="composer"></div>
+</div>
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
+<script src="chat.js"></script>
+<script>
+const { invoke, listen, icon } = Toc;
+const $ = (id) => document.getElementById(id);
+$("btn-expand").innerHTML = icon("expand");
+$("btn-close").innerHTML = icon("close");
+
+const conv = new Toc.Conversation($("conv"), {
+  pageSize: 40,
+  older: false,
+  onImage: () => invoke("open_main", { intent: null }),
+});
+// le dessin se fait dans la grande fenêtre, plus confortable
+const composer = new Toc.Composer($("composer"), { onDraw: () => invoke("open_main", { intent: "draw" }) });
+
+async function refresh() {
+  const s = await invoke("get_state");
+  $("peer").textContent = s.peer_name || "Conversation";
+  $("dot").classList.toggle("on", s.online);
+  $("dot").title = s.online ? "Connecté" : "Hors ligne";
+}
+
+$("btn-expand").onclick = () => invoke("open_main", { intent: null });
+$("btn-close").onclick = () => invoke("close_quick");
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.querySelector(".lightbox, .draw-overlay")) invoke("close_quick");
+});
+
+// comme Spotlight : la fenêtre se range dès qu'on clique ailleurs
+// (sauf pendant le choix d'un fichier)
+let picking = false;
+window.addEventListener("toc-picker-open", () => (picking = true));
+window.addEventListener("toc-picker-done", () => (picking = false));
+window.addEventListener("focus", () => setTimeout(() => (picking = false), 400));
+window.addEventListener("blur", () => {
+  setTimeout(() => {
+    if (!picking && !document.hasFocus()) invoke("close_quick");
+  }, 150);
+});
+
+listen("quick-open", () => {
+  refresh();
+  conv.load();
+  composer.focus();
+});
+listen("state", refresh);
+refresh();
+conv.load();
+</script>
+</body>
+</html>

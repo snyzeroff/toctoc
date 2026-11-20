@@ -3,11 +3,11 @@
 // Usage :
 //   node scripts/cdp.mjs <port> <page> eval "<javascript>"
 //   node scripts/cdp.mjs <port> <page> shot <fichier.png>
-// <page> = main (fenêtre principale) ou notif (notification)
+// <page> = main (fenêtre principale), quick (message rapide) ou notif (notification)
 const [port, page, action, arg] = process.argv.slice(2);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-const isNotif = (u) => u.includes("notif.html");
-const target = targets.find((t) => t.type === "page" && (page === "notif" ? isNotif(t.url) : !isNotif(t.url)));
+const kind = (u) => (u.includes("notif.html") ? "notif" : u.includes("quick.html") ? "quick" : "main");
+const target = targets.find((t) => t.type === "page" && kind(t.url) === page);
 if (!target) {
   console.error("page introuvable :", targets.map((t) => t.url));
   process.exit(1);

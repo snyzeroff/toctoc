@@ -21,6 +21,7 @@ body.small { --k: .82; }
 body.large { --k: 1.3; }
 
 #card {
+  cursor: pointer;
   position: fixed; inset: 20px;
   display: flex; align-items: center; gap: calc(10px * var(--k));
   padding: 0 calc(13px * var(--k));
@@ -68,13 +69,15 @@ body.large { --k: 1.3; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
 #text:empty { display: none; }
-.ping #text { color: var(--text); }
+#thumb { flex: none; width: calc(40px * var(--k)); height: calc(40px * var(--k)); border-radius: calc(9px * var(--k)); object-fit: cover; background: rgba(127,127,127,.2); }
+.ping #text, .msg #text { color: var(--text); }
 </style>
 </head>
 <body>
 <div id="card">
   <div id="icon"></div>
   <div id="body"><div id="title"></div><div id="text"></div></div>
+  <img id="thumb" alt="" hidden>
 </div>
 <script>
 const { invoke } = window.__TAURI__.core;
@@ -87,6 +90,8 @@ const ICONS = {
   error: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M12 6v7M12 17.5v.5"/></svg>',
 };
 ICONS.info = ICONS.ack;
+ICONS.msg = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14a1 1 0 011 1v9a1 1 0 01-1 1h-8l-4 3v-3H5a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>';
+let currentKind = "";
 let timer = null, current = 0;
 
 function close(seq) {
@@ -107,6 +112,10 @@ function render(n) {
   document.getElementById("icon").innerHTML = ICONS[n.kind] || ICONS.ping;
   document.getElementById("title").textContent = n.title;
   document.getElementById("text").textContent = n.text;
+  currentKind = n.kind;
+  const thumb = document.getElementById("thumb");
+  thumb.hidden = !n.thumb;
+  if (n.thumb) thumb.src = window.__TAURI__.core.convertFileSrc(n.thumb, "tocmedia");
   if (n.kind === "ack" && card.classList.contains("in")) {
     card.className = "in shown"; // « envoyé » devient « reçu » sur place, sans nouvelle animation
   } else {
@@ -117,7 +126,13 @@ function render(n) {
   timer = setTimeout(() => close(n.seq), n.duration_ms);
 }
 
-card.addEventListener("click", () => close(current));
+// un clic ouvre la fenêtre rapide pour répondre
+card.addEventListener("click", () => {
+  const seq = current;
+  clearTimeout(timer);
+  card.className = "";
+  invoke("notif_click", { seq, kind: currentKind });
+});
 listen("notify", (e) => render(e.payload));
 invoke("notif_current").then(render);
 </script>
