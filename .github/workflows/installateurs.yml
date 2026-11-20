@@ -1,0 +1,47 @@
+# Fabrique les deux installateurs (Mac .dmg et Windows .exe) sur les machines de GitHub.
+# ⚠️ Le chemin Mac n'a pas encore été essayé sur un vrai Mac.
+# Lancement : onglet « Actions » du dépôt → « Installateurs » → « Run workflow »,
+# ou automatiquement quand on pousse une étiquette du type v0.1.0.
+name: Installateurs
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Mac
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            # « universal » = un seul .dmg pour les Mac Apple Silicon et Intel
+            args: --target universal-apple-darwin --bundles dmg
+            files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          - name: Windows
+            os: windows-latest
+            rust_targets: ""
+            args: --bundles nsis
+            files: src-tauri/target/release/bundle/nsis/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npx tauri build ${{ matrix.args }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TocToc-${{ matrix.name }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Toc Toc</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --surface: rgba(252, 252, 254, .97);
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --ring: rgba(0, 0, 0, .08);
+  --k: 1;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --surface: rgba(44, 44, 48, .97); --text: #f5f5f7; --muted: #b0b0b6; --ring: rgba(255, 255, 255, .14); }
+}
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; user-select: none; -webkit-user-select: none; cursor: default; }
+body.small { --k: .82; }
+body.large { --k: 1.3; }
+
+#card {
+  position: fixed; inset: 20px;
+  display: flex; align-items: center; gap: calc(10px * var(--k));
+  padding: 0 calc(13px * var(--k));
+  background: var(--surface); color: var(--text);
+  border-radius: calc(17px * var(--k));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .16), 0 1px 3px rgba(0, 0, 0, .1), 0 0 0 1px var(--ring);
+  opacity: 0;
+}
+#card.in { animation: appear .28s ease-out both; }
+#card.in.shake { animation: appear .28s ease-out both, shake .5s .3s ease-in-out 1; }
+#card.shown { opacity: 1; }
+#card.out { animation: leave .22s ease-in both; }
+@keyframes appear { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+@keyframes leave { from { opacity: 1; } to { opacity: 0; } }
+/* la « vibration » : un petit frémissement, une seule fois */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #card.in, #card.in.shake { animation: appear .2s both; }
+}
+
+/* confirmations « envoyé » / « reçu » : une pastille minuscule */
+.sent #card, .ack #card, .error #card { inset: 30px 20px; width: max-content; max-width: calc(100% - 40px); margin: 0 auto; padding: 0 14px 0 8px; border-radius: 999px; gap: 8px; }
+.sent #icon, .ack #icon, .error #icon { width: 22px; height: 22px; }
+.sent #title, .ack #title, .error #title { font-size: 12.5px; font-weight: 600; }
+
+#icon {
+  flex: none; width: calc(34px * var(--k)); height: calc(34px * var(--k)); border-radius: 50%;
+  background: linear-gradient(135deg, #7b6cff, #3f8bff);
+  display: grid; place-items: center;
+}
+#icon svg { width: 62%; height: 62%; }
+.ack #icon { background: linear-gradient(135deg, #34c759, #2aa84a); }
+.error #icon { background: linear-gradient(135deg, #ff6b6b, #e5484d); }
+
+#body { min-width: 0; flex: 1; }
+#title { font-weight: 650; font-size: calc(13.5px * var(--k)); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#text {
+  color: var(--muted); font-size: calc(12px * var(--k)); line-height: 1.25; margin-top: 1px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+#text:empty { display: none; }
+.ping #text { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="card">
+  <div id="icon"></div>
+  <div id="body"><div id="title"></div><div id="text"></div></div>
+</div>
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const card = document.getElementById("card");
+const ICONS = {
+  ping: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="2.6" fill="#fff" stroke="none"/><circle cx="12" cy="12" r="6.4" opacity=".8"/><circle cx="12" cy="12" r="10" opacity=".45"/></svg>',
+  sent: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+  ack: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  error: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M12 6v7M12 17.5v.5"/></svg>',
+};
+ICONS.info = ICONS.ack;
+let timer = null, current = 0;
+
+function close(seq) {
+  if (seq !== current) return;
+  clearTimeout(timer);
+  card.className = "out";
+  setTimeout(() => {
+    if (seq === current) card.className = "";
+    invoke("notif_done", { seq });
+  }, 250);
+}
+
+function render(n) {
+  if (!n || n.seq <= current) return;
+  current = n.seq;
+  clearTimeout(timer);
+  document.body.className = n.size + " " + n.kind;
+  document.getElementById("icon").innerHTML = ICONS[n.kind] || ICONS.ping;
+  document.getElementById("title").textContent = n.title;
+  document.getElementById("text").textContent = n.text;
+  if (n.kind === "ack" && card.classList.contains("in")) {
+    card.className = "in shown"; // « envoyé » devient « reçu » sur place, sans nouvelle animation
+  } else {
+    card.className = "";
+    void card.offsetWidth; // relance l'animation
+    card.className = n.kind === "ping" ? "in shake" : "in";
+  }
+  timer = setTimeout(() => close(n.seq), n.duration_ms);
+}
+
+card.addEventListener("click", () => close(current));
+listen("notify", (e) => render(e.payload));
+invoke("notif_current").then(render);
+</script>
+</body>
+</html>

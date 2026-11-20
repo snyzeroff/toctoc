@@ -1,0 +1,14 @@
+{
+  "name": "toctoc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Toc Toc — un ping entre un PC et un Mac",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

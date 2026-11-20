@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toc Toc</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg class="glyph" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7b6cff"/><stop offset="1" stop-color="#3f8bff"/></linearGradient></defs>
+      <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#g)"/>
+      <circle cx="512" cy="512" r="92" fill="#fff"/>
+      <circle cx="512" cy="512" r="196" fill="none" stroke="#fff" stroke-width="52" opacity=".75"/>
+      <circle cx="512" cy="512" r="310" fill="none" stroke="#fff" stroke-width="44" opacity=".38"/>
+    </svg>
+    <span>Toc Toc</span>
+  </div>
+  <div id="status" class="pill" hidden><i></i><span></span></div>
+</header>
+
+<!-- ───────── Appairage ───────── -->
+<main id="view-pair" hidden>
+  <section class="hero">
+    <h1>Associez vos deux ordinateurs</h1>
+    <p>Sur l'un, créez un code. Sur l'autre, tapez-le. C'est tout.</p>
+  </section>
+
+  <section id="pair-choice" class="stack">
+    <button id="btn-create" class="primary big">Créer un code</button>
+    <button id="btn-have" class="secondary big">J'ai déjà un code</button>
+  </section>
+
+  <section id="pair-host" class="card center" hidden>
+    <div class="label">Votre code</div>
+    <div id="code" class="code">—</div>
+    <p class="wait"><span class="spinner"></span>En attente de l'autre ordinateur…</p>
+    <p class="hint">Tapez ce code dans Toc Toc sur l'autre ordinateur. Il est valable 10 minutes.</p>
+    <button id="btn-cancel-host" class="link">Annuler</button>
+  </section>
+
+  <section id="pair-join" class="card center" hidden>
+    <div class="label">Code affiché sur l'autre ordinateur</div>
+    <input id="code-input" class="code-input" maxlength="9" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false" autocapitalize="characters">
+    <button id="btn-join" class="primary big">Associer</button>
+    <p id="join-wait" class="wait" hidden><span class="spinner"></span>Recherche de l'autre ordinateur…</p>
+    <button id="btn-cancel-join" class="link">Retour</button>
+  </section>
+
+  <p id="pair-error" class="error" hidden></p>
+</main>
+
+<!-- ───────── Accueil et réglages ───────── -->
+<main id="view-home" hidden>
+  <section class="card ping-card">
+    <input id="ping-text" maxlength="200" placeholder="Un petit mot (facultatif)" autocomplete="off">
+    <button id="btn-ping" class="primary big">Envoyer un ping</button>
+    <p id="ping-hint" class="hint"></p>
+  </section>
+
+  <h2>Notification</h2>
+  <section class="group">
+    <div class="row">
+      <label for="sound">Son</label>
+      <div class="inline">
+        <select id="sound"></select>
+        <button id="btn-listen" class="chip" title="Écouter">▶︎</button>
+      </div>
+    </div>
+    <div class="row">
+      <label>Son personnalisé</label>
+      <button id="btn-pick" class="chip">Choisir un fichier…</button>
+    </div>
+    <div class="row">
+      <label for="volume">Volume</label>
+      <input id="volume" type="range" min="0" max="100" step="1">
+    </div>
+    <div class="row tall">
+      <label>Position à l'écran</label>
+      <div id="position" class="screen" role="radiogroup" aria-label="Position à l'écran">
+        <button data-pos="top-left" title="En haut à gauche"></button>
+        <button data-pos="top-center" title="En haut au centre"></button>
+        <button data-pos="top-right" title="En haut à droite"></button>
+        <button data-pos="center" title="Au centre"></button>
+        <button data-pos="bottom-left" title="En bas à gauche"></button>
+        <button data-pos="bottom-center" title="En bas au centre"></button>
+        <button data-pos="bottom-right" title="En bas à droite"></button>
+      </div>
+    </div>
+    <div class="row">
+      <label>Taille</label>
+      <div id="size" class="segmented">
+        <button data-v="small">Petite</button><button data-v="medium">Moyenne</button><button data-v="large">Grande</button>
+      </div>
+    </div>
+    <div class="row">
+      <label>Durée d'affichage</label>
+      <div id="duration" class="segmented">
+        <button data-v="2">2 s</button><button data-v="4">4 s</button><button data-v="8">8 s</button><button data-v="15">15 s</button>
+      </div>
+    </div>
+    <div class="row">
+      <label>Voir le résultat</label>
+      <button id="btn-preview" class="chip">Aperçu</button>
+    </div>
+  </section>
+
+  <h2>Général</h2>
+  <section class="group">
+    <div class="row">
+      <label for="dnd">Ne pas déranger<small>Les pings arrivent sans s'afficher ni sonner</small></label>
+      <input id="dnd" type="checkbox" class="switch">
+    </div>
+    <div class="row">
+      <label for="autostart">Lancer au démarrage<small>Toc Toc s'ouvre tout seul avec l'ordinateur</small></label>
+      <input id="autostart" type="checkbox" class="switch">
+    </div>
+    <div class="row">
+      <label for="shortcut">Raccourci clavier<small id="shortcut-warn" class="warn" hidden>Déjà utilisé par une autre application</small></label>
+      <select id="shortcut"></select>
+    </div>
+  </section>
+
+  <section class="footer">
+    <button id="btn-unpair" class="link danger">Dissocier cet ordinateur</button>
+    <div id="unpair-confirm" hidden>
+      <span>Les deux ordinateurs ne seront plus reliés.</span>
+      <button id="btn-unpair-yes" class="chip danger">Dissocier</button>
+      <button id="btn-unpair-no" class="chip">Annuler</button>
+    </div>
+    <p id="version" class="hint"></p>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="main.js"></script>
+</body>
+</html>
