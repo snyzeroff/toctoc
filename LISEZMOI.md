@@ -17,8 +17,32 @@ Au premier lancement, macOS refuse d'ouvrir une application qui ne vient pas de 
 ouvrez **Réglages Système → Confidentialité et sécurité**, descendez, puis cliquez sur
 **Ouvrir quand même** à côté de « Toc Toc ». C'est à faire une seule fois.
 
-> ⚠️ La version Mac n'a pas encore été essayée sur un vrai Mac. Elle se fabrique
-> automatiquement sur GitHub (voir « Fabriquer les installateurs » plus bas).
+**Si le Mac dit que Toc Toc « est endommagé » ou « ne peut pas être ouvert »** (fréquent pour une
+application téléchargée sans signature Apple payante) : après l'avoir glissé dans Applications,
+ouvrez le **Terminal** (Spotlight → « Terminal ») et collez cette ligne, puis Entrée :
+
+```bash
+xattr -cr "/Applications/Toc Toc.app"
+```
+
+Puis rouvrez Toc Toc normalement.
+
+**Plan B : fabriquer Toc Toc directement sur le Mac** (aucun blocage possible, 5 à 10 minutes la
+première fois). Récupérez le projet (branche `toctoc` du dépôt GitHub), puis dans le Terminal :
+
+```bash
+git clone -b toctoc https://github.com/barendrechtmats-lgtm/Inkbook.git toctoc
+```
+
+```bash
+bash toctoc/scripts/installer-mac.sh
+```
+
+Le script vérifie les outils nécessaires (il propose d'installer ce qui manque), fabrique Toc Toc,
+le met dans Applications et l'ouvre.
+
+> ⚠️ La version Mac n'a pas encore été essayée sur un vrai Mac. Si quelque chose bloque,
+> notez le message exact affiché (ou faites une capture d'écran).
 
 ## Associer les deux ordinateurs (une seule fois)
 
