@@ -1,13 +1,11 @@
 # Fabrique les deux installateurs (Mac .dmg et Windows .exe) sur les machines de GitHub.
 # ⚠️ Le chemin Mac n'a pas encore été essayé sur un vrai Mac.
-# Lancement : onglet « Actions » du dépôt → « Installateurs » → « Run workflow »,
-# ou automatiquement quand on pousse une étiquette du type v0.1.0.
+# Lancement : onglet « Actions » du dépôt → « Installateurs » → « Run workflow ».
+# Pour publier une version avec mise à jour automatique, voir publier.yml.
 name: Installateurs
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 jobs:
   build:
@@ -40,6 +38,9 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npx tauri build ${{ matrix.args }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
       - uses: actions/upload-artifact@v4
         with:
           name: TocToc-${{ matrix.name }}

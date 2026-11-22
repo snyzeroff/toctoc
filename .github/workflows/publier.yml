@@ -1,0 +1,52 @@
+# Publie une nouvelle version : les Toc Toc déjà installés la trouvent et se mettent à jour.
+# Déclenchement : pousser une étiquette du type v0.3.0 (même numéro que dans tauri.conf.json).
+#   git tag v0.3.0 && git push origin v0.3.0
+# GitHub fabrique Mac (.dmg + mise à jour) et Windows (.exe + mise à jour), les signe avec la
+# clé de mise à jour (secret TAURI_SIGNING_PRIVATE_KEY) et crée la « Release » avec latest.json.
+name: Publier une version
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publier:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - os: windows-latest
+            rust_targets: ""
+            args: --bundles nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Toc Toc ${{ github.ref_name }}"
+          releaseBody: "Nouvelle version de Toc Toc. Les applications déjà installées se mettent à jour toutes seules."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}

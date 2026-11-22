@@ -22,6 +22,11 @@
   <button id="btn-settings" class="icon-btn" title="Réglages" hidden></button>
 </header>
 
+<div id="update-bar" class="update-bar" hidden>
+  <span id="update-text">Nouvelle version prête.</span>
+  <button id="btn-update" class="pill-btn">Redémarrer</button>
+</div>
+
 <!-- ───────── Appairage ───────── -->
 <main id="view-pair" class="scroll" hidden>
   <section class="hero">
@@ -147,6 +152,10 @@
       <div class="row">
         <label for="autostart">Lancer au démarrage<small>Toc Toc s'ouvre tout seul avec l'ordinateur</small></label>
         <input id="autostart" type="checkbox" class="switch">
+      </div>
+      <div class="row">
+        <label>Mises à jour<small id="update-info">Automatiques</small></label>
+        <button id="btn-check" class="chip">Vérifier</button>
       </div>
       <div class="row">
         <label>Historique<small>Gardé uniquement sur cet ordinateur</small></label>

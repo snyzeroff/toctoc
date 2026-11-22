@@ -1,6 +1,6 @@
 [package]
 name = "toctoc"
-version = "0.2.0"
+version = "0.3.0"
 description = "Toc Toc — un ping entre un PC et un Mac"
 edition = "2021"
 
@@ -17,6 +17,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-clipboard-manager = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["time", "sync"] }

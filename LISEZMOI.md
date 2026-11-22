@@ -6,7 +6,7 @@ ordinateur affiche une notification qui se secoue et joue un petit son.
 ## Installer
 
 **Sur le PC (Windows)**
-Double-cliquez sur `Toc Toc_0.2.0_x64-setup.exe`, puis « Suivant » jusqu'au bout.
+Double-cliquez sur `Toc Toc_0.3.0_x64-setup.exe`, puis « Suivant » jusqu'au bout.
 Windows peut afficher un écran bleu « Windows a protégé votre ordinateur » : cliquez sur
 **Informations complémentaires**, puis **Exécuter quand même**. (C'est normal : le programme
 n'a pas de signature payante.)
@@ -88,6 +88,19 @@ faites-la glisser sur la barre des tâches pour la garder visible.
 légère secousse pour un ping). Un clic dessus ouvre la fenêtre rapide pour répondre. Si la
 conversation est déjà ouverte devant vous, seul le son est joué.
 
+**Copier un message** : passez la souris sur un message (le vôtre ou celui de l'autre), un bouton
+**Copier** apparaît dessous. Il copie le texte, ou l'image si le message n'est qu'une image.
+
+## Mises à jour automatiques
+
+À partir de la version 0.3.0, Toc Toc cherche tout seul une nouvelle version au démarrage puis
+toutes les 6 heures, la télécharge en arrière-plan, puis affiche un bandeau « Toc Toc x.y est prêt
+à être installé » avec un bouton **Redémarrer**. Un clic, et c'est à jour. On peut aussi vérifier
+dans **Réglages → Mises à jour → Vérifier**.
+
+La version 0.3.0 doit être installée une dernière fois à la main sur chaque ordinateur ; ensuite,
+plus besoin.
+
 ## Réglages (propres à chaque ordinateur)
 
 Votre prénom (affiché chez l'autre), son (cinq sons fournis ou votre propre fichier), volume,
@@ -120,7 +133,28 @@ Un Mac ne peut pas vibrer : la « vibration » est la secousse de la notificatio
 - Images : 8 Mo au plus ; les grandes photos sont réduites automatiquement.
 - Le relais gratuit est un service tiers : s'il est en panne, les pings ne passent pas.
 
-## Fabriquer les installateurs (pour la personne qui s'occupe de la technique)
+## Publier une nouvelle version (pour la personne qui s'occupe de la technique)
+
+1. Changer le numéro de version dans `package.json`, `src-tauri/tauri.conf.json` et
+   `src-tauri/Cargo.toml` (par exemple 0.3.1).
+2. Enregistrer et envoyer, puis poser l'étiquette de version :
+
+```powershell
+git tag v0.3.1
+```
+
+```powershell
+git push origin main v0.3.1
+```
+
+GitHub fabrique alors Mac et Windows (environ 15 minutes) et publie la version ; les Toc Toc
+installés la proposent ensuite d'eux-mêmes. Cela demande que le dépôt soit **public** (pour que
+les applications puissent télécharger la mise à jour) et que la clé de signature soit enregistrée
+dans les secrets du dépôt sous le nom `TAURI_SIGNING_PRIVATE_KEY`. La clé se trouve sur le PC dans
+`%USERPROFILE%\.tauri\toctoc-updater.key` : **gardez-en une copie**, sans elle on ne peut plus
+publier de mise à jour pour les applications déjà installées.
+
+## Fabriquer les installateurs à la main
 
 Windows, sur ce PC (Node et Rust installés) :
 

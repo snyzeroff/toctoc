@@ -169,6 +169,7 @@ function render() {
     row.querySelector(".x").hidden = !accels[which];
   });
   $("version").textContent = "Toc Toc " + state.version;
+  showUpdate();
 }
 
 async function refresh() {
@@ -208,6 +209,39 @@ function startChat() {
   conv.load();
   setTimeout(() => composer.focus(), 50);
 }
+
+// ───────── mises à jour ─────────
+function showUpdate() {
+  const v = state?.update;
+  $("update-bar").hidden = !v;
+  if (v) $("update-text").textContent = "Toc Toc " + v + " est prêt à être installé.";
+  $("update-info").textContent = v
+    ? "Version " + v + " prête : redémarrez pour l'installer"
+    : "Automatiques · version actuelle " + (state?.version || "");
+}
+$("btn-update").onclick = async () => {
+  $("btn-update").disabled = true;
+  $("update-text").textContent = "Installation… Toc Toc va redémarrer.";
+  try {
+    await invoke("install_update");
+  } catch (err) {
+    toast(String(err));
+    $("btn-update").disabled = false;
+  }
+};
+$("btn-check").onclick = async () => {
+  $("btn-check").disabled = true;
+  $("update-info").textContent = "Vérification…";
+  try {
+    const v = await invoke("check_update");
+    if (!v) toast("Toc Toc est à jour.");
+  } catch (err) {
+    toast(String(err));
+  } finally {
+    $("btn-check").disabled = false;
+    await refresh();
+  }
+};
 
 // ───────── appairage ─────────
 function pairError(text) {
@@ -344,6 +378,7 @@ listen("pair-result", async (e) => {
   }
   await refresh();
 });
+listen("update-ready", refresh);
 listen("intent", (e) => {
   if (!state?.paired) return;
   if (e.payload === "settings") openSettings();

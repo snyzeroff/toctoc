@@ -12,7 +12,7 @@ pub enum Event {
 
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent("toctoc/0.2")
+        .user_agent("toctoc/0.3")
         .connect_timeout(Duration::from_secs(15))
         .build()
         .expect("client HTTP")

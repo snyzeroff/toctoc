@@ -20,6 +20,8 @@ window.Toc = (() => {
     italic: '<path d="M10 5h8M6 19h8M14 5l-4 14"/>',
     code: '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/>',
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18" r="1" fill="currentColor"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 012-2h9"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     link: '<path d="M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1-1"/>',
   };
   const icon = (name) =>
@@ -220,7 +222,32 @@ window.Toc = (() => {
         b.onclick = () => invoke("retry", { id: m.id });
         d.append(b);
       }
+      // le bouton se place du côté intérieur de la conversation
+      if (m.kind !== "ping" && (m.text || m.image)) m.out ? d.prepend(this.copyBtn(m)) : d.append(this.copyBtn(m));
       return d;
+    }
+    copyBtn(m) {
+      const b = document.createElement("button");
+      b.className = "copy";
+      const label = m.text ? "Copier" : "Copier l'image";
+      b.innerHTML = icon("copy") + "<span>" + label + "</span>";
+      b.title = m.text ? "Copier le texte" : "Copier l'image";
+      b.onclick = async () => {
+        // le texte tel qu'il s'affiche (sans les ** et autres signes de mise en forme)
+        const shown = this.el.querySelector('[data-id="' + m.id + '"] .md')?.innerText;
+        try {
+          await invoke("copy_message", { id: m.id, text: shown || null });
+          b.classList.add("done");
+          b.innerHTML = icon("check") + "<span>Copié</span>";
+          setTimeout(() => {
+            b.classList.remove("done");
+            b.innerHTML = icon("copy") + "<span>" + label + "</span>";
+          }, 1400);
+        } catch (err) {
+          toast(String(err));
+        }
+      };
+      return b;
     }
     node(m) {
       const row = document.createElement("div");

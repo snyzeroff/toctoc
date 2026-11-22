@@ -20,7 +20,9 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt as _;
+use tauri_plugin_clipboard_manager::ClipboardExt as _;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt as _, Shortcut, ShortcutState};
+use tauri_plugin_updater::UpdaterExt as _;
 
 type Task = tauri::async_runtime::JoinHandle<()>;
 
@@ -48,6 +50,9 @@ pub struct AppState {
     /// raccourcis enregistrés : (identifiant, action)
     shortcuts: Mutex<Vec<(u32, &'static str)>>,
     shortcut_ok: Mutex<[bool; 3]>,
+    /// mise à jour téléchargée, prête à être installée
+    pending_update: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+    update_busy: AtomicBool,
 }
 
 impl AppState {
@@ -676,6 +681,7 @@ fn get_state(app: AppHandle) -> serde_json::Value {
         "pair_code": *st.pair_code.lock().unwrap(),
         "shortcut_ok": *st.shortcut_ok.lock().unwrap(),
         "mac": cfg!(target_os = "macos"),
+        "update": st.pending_update.lock().unwrap().as_ref().map(|(u, _)| u.version.clone()),
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -919,6 +925,89 @@ fn notif_click(app: AppHandle, seq: u64, kind: String) {
     }
 }
 
+// ───────────────────────── copier un message ─────────────────────────
+
+/// Copie un message : son texte (tel qu'affiché), sinon son image.
+#[tauri::command]
+fn copy_message(app: AppHandle, id: String, text: Option<String>) -> Result<&'static str, String> {
+    let st = app.state::<AppState>();
+    let m = st.history.lock().unwrap().get(&id).ok_or("Message introuvable.")?;
+    if let Some(t) = text.filter(|t| !t.trim().is_empty()).or(m.text.clone()) {
+        app.clipboard().write_text(t).map_err(|e| e.to_string())?;
+        return Ok("text");
+    }
+    let name = m.image.ok_or("Rien à copier.")?;
+    let bytes = std::fs::read(history::media_dir(&st.dir).join(&name)).map_err(|_| "Image introuvable.".to_string())?;
+    let rgba = image::load_from_memory(&bytes).map_err(|_| "Image illisible.".to_string())?.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let img = tauri::image::Image::new_owned(rgba.into_raw(), w, h);
+    app.clipboard().write_image(&img).map_err(|e| e.to_string())?;
+    Ok("image")
+}
+
+// ───────────────────────── mises à jour automatiques ─────────────────────────
+
+/// Cherche une nouvelle version ; si elle existe, la télécharge en arrière-plan.
+async fn look_for_update(app: &AppHandle) -> Result<Option<String>, String> {
+    let st = app.state::<AppState>();
+    if let Some((u, _)) = st.pending_update.lock().unwrap().as_ref() {
+        return Ok(Some(u.version.clone()));
+    }
+    if st.update_busy.swap(true, Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let res = async {
+        let updater = app.updater().map_err(|e| e.to_string())?;
+        let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        st.log(&format!("mise à jour: version {} trouvée, téléchargement", update.version));
+        let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+        let version = update.version.clone();
+        *st.pending_update.lock().unwrap() = Some((update, bytes));
+        st.log(&format!("mise à jour: version {version} prête"));
+        let _ = app.emit("update-ready", &version);
+        notif::show(app, "info", "Mise à jour prête", &format!("Toc Toc {version} : redémarrez depuis la fenêtre"), 6000);
+        emit_state(app);
+        Ok(Some(version))
+    }
+    .await;
+    st.update_busy.store(false, Ordering::SeqCst);
+    if let Err(e) = &res {
+        st.log(&format!("mise à jour: vérification impossible ({e})"));
+    }
+    res
+}
+
+/// Au démarrage (après 20 s) puis toutes les 6 heures.
+fn start_update_loop(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        loop {
+            let _ = look_for_update(&app).await;
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+        }
+    });
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    look_for_update(&app).await.map_err(|_| "Impossible de vérifier les mises à jour (connexion ?).".to_string())
+}
+
+/// Installe la mise à jour téléchargée puis relance Toc Toc.
+#[tauri::command]
+fn install_update(app: AppHandle) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let Some((update, bytes)) = st.pending_update.lock().unwrap().take() else {
+        return Err("Aucune mise à jour prête.".into());
+    };
+    st.log(&format!("mise à jour: installation de {}", update.version));
+    update.install(bytes).map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 // ───────────────────────── démarrage ─────────────────────────
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -1011,6 +1100,8 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
@@ -1061,7 +1152,10 @@ pub fn run() {
             open_link,
             notif_current,
             notif_done,
-            notif_click
+            notif_click,
+            copy_message,
+            check_update,
+            install_update
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1096,6 +1190,8 @@ pub fn run() {
                 dnd_item: Mutex::new(None),
                 shortcuts: Mutex::new(Vec::new()),
                 shortcut_ok: Mutex::new([true; 3]),
+                pending_update: Mutex::new(None),
+                update_busy: AtomicBool::new(false),
             });
             let st = handle.state::<AppState>();
             st.log(&format!("démarrage (version {})", env!("CARGO_PKG_VERSION")));
@@ -1154,6 +1250,7 @@ pub fn run() {
                 st.log(&format!("raccourcis: certains indisponibles {ok:?}"));
             }
             start_listening(&handle);
+            start_update_loop(&handle);
 
             let hidden = std::env::args().any(|a| a == "--hidden");
             if !paired || !hidden {
