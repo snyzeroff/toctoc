@@ -22,6 +22,7 @@ window.Toc = (() => {
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18" r="1" fill="currentColor"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 012-2h9"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    checklist: '<rect x="3.5" y="4" width="5" height="5" rx="1.2"/><path d="M4.8 6.6l1.1 1.1 1.8-2"/><rect x="3.5" y="14" width="5" height="5" rx="1.2"/><path d="M12 6.5h8.5M12 16.5h8.5M14 20h6"/>',
     link: '<path d="M10 14a4.5 4.5 0 006.4 0l3-3a4.5 4.5 0 00-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 00-6.4 0l-3 3a4.5 4.5 0 006.4 6.4l1-1"/>',
   };
   const icon = (name) =>
@@ -200,7 +201,29 @@ window.Toc = (() => {
       const i = this.msgs.findIndex((x) => x.id === m.id);
       if (i < 0) return;
       this.msgs[i] = m;
-      const old = this.el.querySelector(`[data-id="${m.id}"] .meta`);
+      const row = this.el.querySelector(`[data-id="${m.id}"]`);
+      if (m.kind === "todo" && row) {
+        // on ne coupe pas quelqu'un en train d'écrire dans la liste
+        const a = document.activeElement;
+        if (row.contains(a) && a.tagName === "INPUT" && a.value.trim()) {
+          row.__pending = m;
+          if (!row.__waiting) {
+            row.__waiting = true;
+            row.addEventListener("focusout", () => setTimeout(() => {
+              row.__waiting = false;
+              const p = row.__pending;
+              row.__pending = null;
+              if (p && row.isConnected && !row.contains(document.activeElement)) this.update(p);
+            }, 200));
+          }
+          return;
+        }
+        const fresh = this.node(m);
+        fresh.className = row.className;
+        row.replaceWith(fresh);
+        return;
+      }
+      const old = row?.querySelector(".meta");
       if (old) old.replaceWith(this.meta(m));
     }
     meta(m) {
@@ -223,18 +246,19 @@ window.Toc = (() => {
         d.append(b);
       }
       // le bouton se place du côté intérieur de la conversation
-      if (m.kind !== "ping" && (m.text || m.image)) m.out ? d.prepend(this.copyBtn(m)) : d.append(this.copyBtn(m));
+      if (m.kind !== "ping" && (m.text || m.image || m.todo)) m.out ? d.prepend(this.copyBtn(m)) : d.append(this.copyBtn(m));
       return d;
     }
     copyBtn(m) {
       const b = document.createElement("button");
       b.className = "copy";
-      const label = m.text ? "Copier" : "Copier l'image";
+      const label = m.text || m.todo ? "Copier" : "Copier l'image";
       b.innerHTML = icon("copy") + "<span>" + label + "</span>";
       b.title = m.text ? "Copier le texte" : "Copier l'image";
       b.onclick = async () => {
         // le texte tel qu'il s'affiche (sans les ** et autres signes de mise en forme)
-        const shown = this.el.querySelector('[data-id="' + m.id + '"] .md')?.innerText;
+        const cur = this.msgs.find((x) => x.id === m.id) || m;
+        const shown = cur.todo ? Toc.todoPlain(cur.todo) : this.el.querySelector('[data-id="' + m.id + '"] .md')?.innerText;
         try {
           await invoke("copy_message", { id: m.id, text: shown || null });
           b.classList.add("done");
@@ -255,7 +279,10 @@ window.Toc = (() => {
       row.dataset.id = m.id;
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      if (m.kind === "ping") {
+      if (m.kind === "todo" && m.todo) {
+        bubble.classList.add("has-todo");
+        bubble.append(Toc.todoCard(m));
+      } else if (m.kind === "ping") {
         bubble.classList.add("ping");
         bubble.innerHTML = icon("ping") + "<span>Toc toc</span>";
       } else {
@@ -305,6 +332,7 @@ window.Toc = (() => {
           <button data-act="ping" class="tool" title="Envoyer un ping">${icon("ping")}</button>
           <button data-act="image" class="tool" title="Joindre une image">${icon("image")}</button>
           <button data-act="draw" class="tool" title="Dessiner">${icon("draw")}</button>
+          <button data-act="todo" class="tool" title="Créer une liste à cocher">${icon("checklist")}</button>
           <span class="grow"></span>
           <button data-act="send" class="send" title="Envoyer (Entrée)">${icon("send")}</button>
         </div>
@@ -376,6 +404,7 @@ window.Toc = (() => {
         window.dispatchEvent(new Event("toc-picker-open"));
         this.file.click();
       } else if (a === "draw") this.onDraw && this.onDraw();
+      else if (a === "todo") Toc.newTodo();
       else if (a === "unattach") this.attach(null);
       else if (a === "bold") this.wrap("**", "**");
       else if (a === "italic") this.wrap("*", "*");

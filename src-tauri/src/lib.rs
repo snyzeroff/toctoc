@@ -5,6 +5,7 @@ mod notif;
 mod pairing;
 mod relay;
 mod sound;
+mod todo;
 
 use config::{Config, Settings};
 use history::{History, Msg};
@@ -100,6 +101,9 @@ struct Wire {
     reference: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dnd: Option<bool>,
+    /// liste partagée (création ou nouvel état)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    todo: Option<todo::TodoList>,
 }
 
 // ───────────────────────── état et fenêtres ─────────────────────────
@@ -358,6 +362,7 @@ fn handle_plain(app: &AppHandle, key: &[u8; 32], plain: &[u8]) {
                 image: image.clone(),
                 drawing: msg.drawing,
                 status: "received".into(),
+                todo: None,
             };
             st.history.lock().unwrap().add(entry.clone());
             emit_msg(app, "add", &entry);
@@ -393,6 +398,66 @@ fn handle_plain(app: &AppHandle, key: &[u8; 32], plain: &[u8]) {
                 ..Default::default()
             };
             publish_small(app, key, ack);
+        }
+        "todo" => {
+            let Some(mut list) = msg.todo else { return };
+            list.sanitize();
+            if list.items.is_empty() {
+                return;
+            }
+            // même identifiant des deux côtés : c'est lui qui relie les changements
+            let entry = Msg {
+                id: msg.id.clone(),
+                out: false,
+                ts: history::now_ms(),
+                kind: "todo".into(),
+                text: None,
+                image: None,
+                drawing: false,
+                status: "received".into(),
+                todo: Some(list.clone()),
+            };
+            st.history.lock().unwrap().add(entry.clone());
+            emit_msg(app, "add", &entry);
+            if dnd {
+                st.log("todo: reçue, sans alerte (ne pas déranger)");
+            } else {
+                st.log("todo: reçue");
+                if !(window_focused(app, "main") || window_focused(app, "quick")) {
+                    let body = format!("📋 {}", list.title.clone().unwrap_or_else(|| preview_text(&list.plain())));
+                    notif::show_with(app, "msg", &peer_label(app), &body, (duration * 1000.0) as u64, None);
+                }
+                play_sound(app);
+            }
+            let ack = Wire { t: "ack".into(), id: crypto::random_hex(8), from: dev, reference: Some(msg.id), ..Default::default() };
+            publish_small(app, key, ack);
+        }
+        "todo-sync" => {
+            let (Some(reference), Some(mut incoming)) = (msg.reference, msg.todo) else { return };
+            incoming.sanitize();
+            let mut differs = false;
+            let updated = st.history.lock().unwrap().update(&reference, |m| {
+                let Some(local) = m.todo.as_mut() else { return false };
+                let changed = local.merge(&incoming);
+                // l'autre a raté un de nos changements : on lui renverra notre état
+                differs = local.items.len() != incoming.items.len()
+                    || local.items.iter().any(|l| incoming.items.iter().all(|i| i != l));
+                changed
+            });
+            if let Some(m) = &updated {
+                emit_msg(app, "update", m);
+                st.log("todo: liste mise à jour par l'autre");
+            }
+            if differs {
+                let list = st.history.lock().unwrap().get(&reference).and_then(|m| m.todo);
+                if let Some(list) = list {
+                    let back = Wire { t: "todo-sync".into(), id: crypto::random_hex(8), from: dev, reference: Some(reference), todo: Some(list), ..Default::default() };
+                    let app2 = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = transmit(&app2, &back).await;
+                    });
+                }
+            }
         }
         "ack" => {
             let Some(reference) = msg.reference else { return };
@@ -483,6 +548,7 @@ async fn deliver(app: AppHandle, id: String) {
         text: m.text.clone(),
         drawing: m.drawing,
         name: my_name(&app),
+        todo: m.todo.clone(),
         ..Default::default()
     };
     if let Some(img) = &m.image {
@@ -527,6 +593,7 @@ fn add_outgoing(app: &AppHandle, kind: &str, text: Option<String>, image: Option
         image,
         drawing,
         status: "sending".into(),
+        todo: None,
     };
     st.history.lock().unwrap().add(m.clone());
     emit_msg(app, "add", &m);
@@ -805,6 +872,63 @@ fn send_message(
     let m = add_outgoing(&app, "msg", (!text.is_empty()).then_some(text), image_name, drawing);
     tauri::async_runtime::spawn(deliver(app.clone(), m.id.clone()));
     Ok(m)
+}
+
+/// Crée une liste partagée et l'envoie.
+#[tauri::command]
+fn send_todo(app: AppHandle, mut todo: todo::TodoList) -> Result<Msg, String> {
+    let st = app.state::<AppState>();
+    if st.cfg.lock().unwrap().pairing.is_none() {
+        return Err("Cet ordinateur n'est pas encore associé.".into());
+    }
+    let now = history::now_ms();
+    for it in todo.items.iter_mut() {
+        it.ts = now;
+        it.done = false;
+        it.deleted = false;
+    }
+    todo.sanitize();
+    if todo.items.is_empty() {
+        return Err("La liste est vide.".into());
+    }
+    let m = Msg {
+        id: crypto::random_hex(8),
+        out: true,
+        ts: now,
+        kind: "todo".into(),
+        text: None,
+        image: None,
+        drawing: false,
+        status: "sending".into(),
+        todo: Some(todo),
+    };
+    st.history.lock().unwrap().add(m.clone());
+    emit_msg(&app, "add", &m);
+    tauri::async_runtime::spawn(deliver(app.clone(), m.id.clone()));
+    Ok(m)
+}
+
+/// Coche, ajoute, renomme ou supprime un élément ; l'autre ordinateur reçoit la liste à jour.
+#[tauri::command]
+fn todo_op(app: AppHandle, id: String, op: todo::TodoOp) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let new_id = crypto::random_hex(6);
+    let updated = st
+        .history
+        .lock()
+        .unwrap()
+        .update(&id, |m| m.todo.as_mut().map(|l| l.apply(op, history::now_ms(), new_id)).unwrap_or(false));
+    let Some(m) = updated else { return Ok(()) };
+    emit_msg(&app, "update", &m);
+    let dev = st.cfg.lock().unwrap().device_id.clone();
+    let wire = Wire { t: "todo-sync".into(), id: crypto::random_hex(8), from: dev, reference: Some(id), todo: m.todo, ..Default::default() };
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = transmit(&app2, &wire).await {
+            app2.state::<AppState>().log(&format!("todo: synchronisation impossible ({e})"));
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1154,6 +1278,8 @@ pub fn run() {
             notif_done,
             notif_click,
             copy_message,
+            send_todo,
+            todo_op,
             check_update,
             install_update
         ])

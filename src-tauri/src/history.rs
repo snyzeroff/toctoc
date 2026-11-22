@@ -12,7 +12,7 @@ pub struct Msg {
     pub out: bool,
     /// millisecondes depuis 1970
     pub ts: u64,
-    /// ping | msg
+    /// ping | msg | todo
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -23,6 +23,9 @@ pub struct Msg {
     pub drawing: bool,
     /// sending | sent | delivered | failed | received
     pub status: String,
+    /// liste partagée (messages « todo »)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo: Option<crate::todo::TodoList>,
 }
 
 pub struct History {
@@ -120,6 +123,17 @@ impl History {
         Some(out)
     }
 
+    /// Modifie un message ; `f` renvoie vrai s'il a changé quelque chose.
+    pub fn update(&mut self, id: &str, f: impl FnOnce(&mut Msg) -> bool) -> Option<Msg> {
+        let m = self.msgs.iter_mut().find(|m| m.id == id)?;
+        if !f(m) {
+            return None;
+        }
+        let out = m.clone();
+        self.save();
+        Some(out)
+    }
+
     /// Les `limit` messages qui précèdent `before` (ou les derniers).
     pub fn page(&self, before: Option<&str>, limit: usize) -> Vec<Msg> {
         let end = before
@@ -175,6 +189,7 @@ mod tests {
                 image: None,
                 drawing: false,
                 status: "sent".into(),
+                todo: None,
             });
         }
         assert_eq!(h.page(None, 3).iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["7", "8", "9"]);

@@ -6,7 +6,7 @@ ordinateur affiche une notification qui se secoue et joue un petit son.
 ## Installer
 
 **Sur le PC (Windows)**
-Double-cliquez sur `Toc Toc_0.3.0_x64-setup.exe`, puis « Suivant » jusqu'au bout.
+Double-cliquez sur `Toc Toc_0.4.0_x64-setup.exe`, puis « Suivant » jusqu'au bout.
 Windows peut afficher un écran bleu « Windows a protégé votre ordinateur » : cliquez sur
 **Informations complémentaires**, puis **Exécuter quand même**. (C'est normal : le programme
 n'a pas de signature payante.)
@@ -87,6 +87,21 @@ faites-la glisser sur la barre des tâches pour la garder visible.
 **Les notifications** : un message ou un ping qui arrive s'affiche en petit avec un son (et une
 légère secousse pour un ping). Un clic dessus ouvre la fenêtre rapide pour répondre. Si la
 conversation est déjà ouverte devant vous, seul le son est joué.
+
+**Listes à cocher partagées** : le bouton liste (à droite du crayon) ouvre un petit éditeur.
+Un titre si vous voulez, puis un élément par ligne : **Entrée** crée une nouvelle ligne, **Tab** la
+place en dessous de la précédente (sous-élément), **Maj + Tab** la remonte. Un clic sur la case la
+transforme en simple point (•), pour noter des idées sous une tâche. **Envoyer**, et la liste
+apparaît chez vous deux. Ensuite, directement dans la conversation :
+
+- cocher ou décocher une case ;
+- **Ajouter un élément…** en bas de la liste ;
+- au survol d'une ligne : **+** pour ajouter dessous, **•/☐** pour changer de type, **×** pour
+  supprimer (avec ce qui est dessous) ;
+- double-clic sur un texte pour le modifier.
+
+Chaque changement apparaît aussitôt chez l'autre. Si vous modifiez la même liste en même temps,
+rien ne se perd : chaque ligne garde sa dernière version.
 
 **Copier un message** : passez la souris sur un message (le vôtre ou celui de l'autre), un bouton
 **Copier** apparaît dessous. Il copie le texte, ou l'image si le message n'est qu'une image.

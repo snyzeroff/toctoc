@@ -156,6 +156,54 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .md td, .md th { border: 1px solid rgba(127, 127, 127, .4); padding: 3px 7px; }
 .md hr { border: 0; border-top: 1px solid currentColor; opacity: .3; }
 
+/* ───────── listes partagées ───────── */
+.bubble.has-todo { background: var(--card) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--line); padding: 10px 12px 8px; min-width: 260px; }
+.out .bubble.has-todo { border-bottom-right-radius: 6px; }
+.todo { display: grid; gap: 6px; }
+.td-head { display: flex; align-items: center; gap: 8px; }
+.td-ico { color: var(--accent); display: grid; }
+.td-ico .ico { width: 18px; height: 18px; }
+.td-title { font-weight: 650; flex: 1; }
+.td-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.td-count.full { color: var(--ok); font-weight: 600; }
+.td-bar { height: 4px; border-radius: 4px; background: var(--field); overflow: hidden; }
+.td-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); border-radius: 4px; transition: width .25s; }
+.td-items { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
+.td-item { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; border-radius: 6px; }
+.td-check { flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 5px; background: none; box-shadow: inset 0 0 0 1.6px var(--muted); display: grid; place-items: center; padding: 0; color: #fff; transition: background .12s; }
+.td-check:hover { box-shadow: inset 0 0 0 1.6px var(--accent); }
+.td-check .ico { width: 13px; height: 13px; stroke-width: 3; }
+.done .td-check { background: var(--ok); box-shadow: none; }
+.td-dot { flex: none; width: 18px; text-align: center; color: var(--muted); font-weight: 700; }
+.td-text { flex: 1; min-width: 0; overflow-wrap: anywhere; cursor: text; }
+.td-text a { color: var(--accent); }
+.td-text code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; background: var(--field); padding: 0 4px; border-radius: 4px; }
+.done .td-text { color: var(--muted); text-decoration: line-through; }
+.td-tools { display: flex; gap: 1px; opacity: 0; transition: opacity .12s; }
+.td-item:hover .td-tools { opacity: 1; }
+.td-tools button { background: none; color: var(--muted); width: 22px; height: 20px; border-radius: 5px; padding: 0; display: grid; place-items: center; font-size: 14px; line-height: 1; }
+.td-tools button:hover { background: var(--field); color: var(--text); }
+.td-tools .ico { width: 12px; height: 12px; }
+.td-new input, .td-sub input, .td-edit { width: 100%; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 13.5px; padding: 5px 9px; user-select: text; -webkit-user-select: text; }
+.td-sub { list-style: none; padding: 2px 0; }
+.td-edit { flex: 1; padding: 2px 6px; }
+.td-new input::placeholder, .td-sub input::placeholder { color: var(--muted); }
+.todo-editor { max-width: 560px; margin: 24px auto; max-height: calc(100% - 48px); }
+.te-body { padding: 12px 14px 14px; overflow-y: auto; display: grid; gap: 8px; align-content: start; }
+.te-title { border: 0; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 16px; font-weight: 650; padding: 9px 12px; }
+.te-rows { display: grid; gap: 4px; }
+.te-row { display: flex; align-items: center; gap: 8px; }
+.te-row input { flex: 1; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; padding: 7px 10px; }
+.te-row input:focus, .te-title:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.te-kind { flex: none; width: 20px; height: 20px; border-radius: 5px; background: none; padding: 0; box-shadow: inset 0 0 0 1.6px var(--muted); }
+.te-kind.point { box-shadow: none; position: relative; }
+.te-kind.point::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--muted); }
+.te-del { flex: none; background: none; color: var(--muted); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; opacity: .5; }
+.te-del:hover { opacity: 1; background: var(--field); }
+.te-del .ico { width: 13px; height: 13px; }
+.te-add { justify-self: start; padding-left: 0; }
+.te-hint { line-height: 1.5; }
+
 /* ───────── zone d'écriture ───────── */
 .composer { flex: none; padding: 8px 12px 12px; border-top: 1px solid var(--line); display: grid; gap: 6px; background: var(--bg); }
 .fmt { display: flex; gap: 2px; }
